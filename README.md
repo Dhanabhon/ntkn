@@ -1,5 +1,8 @@
 # ntkn
 
+> [!WARNING]
+> This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
+
 ntkn (pronounced "nub-token" 🇹🇭) is a fast, lightweight CLI TUI written in Rust. It counts the tokens in a project folder and shows how much of each LLM's context window they would fill.
 
 Run it inside a repo and you get a live terminal dashboard: a token count per provider and a set of gauges showing how close you are to each model's context limit.
