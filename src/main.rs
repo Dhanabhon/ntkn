@@ -58,11 +58,30 @@ fn main() -> Result<(), io::Error> {
     daemon::spawn_daemon(&current_dir)?;
 
     // Start TUI Monitor
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+        original_hook(panic_info);
+    }));
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    if let Err(err) = execute!(stdout, EnterAlternateScreen, cursor::Hide) {
+        let _ = disable_raw_mode();
+        return Err(err);
+    }
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = match Terminal::new(backend) {
+        Ok(t) => t,
+        Err(err) => {
+            let _ = disable_raw_mode();
+            let mut stdout = io::stdout();
+            let _ = execute!(stdout, LeaveAlternateScreen, cursor::Show);
+            return Err(err);
+        }
+    };
 
     let current_dir_str = current_dir.to_string_lossy().to_string();
     let state_file = daemon::get_state_file_path(&current_dir);
@@ -104,7 +123,6 @@ fn main() -> Result<(), io::Error> {
                         match key.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 let _ = daemon::modify_daemon_status(&current_dir, "Stopped");
-                                show_stop_modal = false;
                                 break;
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
