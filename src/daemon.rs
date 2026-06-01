@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub fn get_state_file_path(path: &Path) -> PathBuf {
     let hash = crate::config::get_path_hash(path);
@@ -27,12 +27,14 @@ pub fn is_daemon_running(path: &Path) -> bool {
     if pid_file.exists() {
         if let Ok(pid_str) = fs::read_to_string(pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                // On macOS/Unix, kill -0 checks if process exists
-                let status = Command::new("kill")
-                    .arg("-0")
-                    .arg(pid.to_string())
-                    .status();
-                return status.map(|s| s.success()).unwrap_or(false);
+                if pid > 0 {
+                    // On macOS/Unix, kill -0 checks if process exists
+                    let status = Command::new("kill")
+                        .arg("-0")
+                        .arg(pid.to_string())
+                        .status();
+                    return status.map(|s| s.success()).unwrap_or(false);
+                }
             }
         }
     }
@@ -51,6 +53,9 @@ pub fn spawn_daemon(path: &Path) -> Result<(), std::io::Error> {
         .arg("daemon")
         .arg("--watch")
         .arg(absolute_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()?;
 
     Ok(())
