@@ -1,4 +1,4 @@
-use std::{io, panic, time::Duration};
+use std::{io, path::PathBuf, time::Duration};
 use crossterm::{
     execute,
     terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -7,77 +7,23 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
+mod config;
 mod scanner;
 mod counter;
 mod ui;
-mod config;
 mod daemon;
 mod watcher;
 mod stats;
 
-type DestructibleTerminal = Terminal<CrosstermBackend<io::Stdout>>;
-
-/// Initializes the terminal by enabling raw mode, entering the alternate screen, and hiding the cursor.
-fn setup_terminal() -> Result<DestructibleTerminal, io::Error> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
-    let backend = CrosstermBackend::new(stdout);
-    Terminal::new(backend)
-}
-
-/// Restores the terminal to its original state (disables raw mode, leaves the alternate screen, and shows the cursor).
-fn restore_terminal_state() -> Result<(), io::Error> {
-    disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen, cursor::Show)?;
-    Ok(())
-}
-
-/// Runs the main application loop, drawing the UI and polling for crossterm keyboard events.
-fn run_app(terminal: &mut DestructibleTerminal) -> Result<(), io::Error> {
-    let current_dir = std::env::current_dir()?;
-    let current_dir_str = current_dir.to_string_lossy().to_string();
-
-    let mut project_text = scanner::ProjectScanner::scan_project(&current_dir);
-    let mut token_data = counter::TokenCounter::calculate_all(&project_text);
-
-    loop {
-        terminal.draw(|f| {
-            ui::draw(f, &token_data, &current_dir_str);
-        })?;
-
-        // Wait up to 250ms for keyboard events to prevent 100% CPU utilization
-        if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                // Handle key presses (on Windows/enhanced terminals we ignore Release/Repeat events)
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            break;
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            break;
-                        }
-                        KeyCode::Char('r') => {
-                            project_text = scanner::ProjectScanner::scan_project(&current_dir);
-                            token_data = counter::TokenCounter::calculate_all(&project_text);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
+    
+    // Command line sub-routing
     if args.len() > 1 {
         match args[1].as_str() {
             "daemon" => {
                 if args.len() > 3 && args[2] == "--watch" {
-                    let path = std::path::PathBuf::from(&args[3]);
+                    let path = PathBuf::from(&args[3]);
                     return daemon::run_daemon(path);
                 }
             }
@@ -101,18 +47,113 @@ fn main() -> Result<(), io::Error> {
         }
     }
 
-    // Set up a custom panic hook to guarantee that the terminal state is restored if the program crashes.
-    let original_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        let _ = restore_terminal_state();
-        original_hook(panic_info);
-    }));
+    // Default Interactive Startup
+    let current_dir = std::env::current_dir()?;
+    if !config::verify_trust_interactive(&current_dir)? {
+        println!("Exiting.");
+        return Ok(());
+    }
 
-    let mut terminal = setup_terminal()?;
-    let run_result = run_app(&mut terminal);
+    // Spawn daemon if not running
+    daemon::spawn_daemon(&current_dir)?;
 
-    // Restore standard terminal state
-    restore_terminal_state()?;
+    // Start TUI Monitor
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-    run_result
+    let current_dir_str = current_dir.to_string_lossy().to_string();
+    let state_file = daemon::get_state_file_path(&current_dir);
+
+    let mut show_pause_modal = false;
+    let mut show_stop_modal = false;
+
+    loop {
+        // Read daemon state from local state JSON
+        let state = if state_file.exists() {
+            if let Ok(content) = std::fs::read_to_string(&state_file) {
+                serde_json::from_str::<watcher::DaemonState>(&content).unwrap_or_else(|_| create_fallback_state())
+            } else {
+                create_fallback_state()
+            }
+        } else {
+            create_fallback_state()
+        };
+
+        terminal.draw(|f| {
+            ui::draw(f, &state, &current_dir_str, show_pause_modal, show_stop_modal);
+        })?;
+
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    if show_pause_modal {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let _ = daemon::modify_daemon_status(&current_dir, "Paused");
+                                show_pause_modal = false;
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                show_pause_modal = false;
+                            }
+                            _ => {}
+                        }
+                    } else if show_stop_modal {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let _ = daemon::modify_daemon_status(&current_dir, "Stopped");
+                                show_stop_modal = false;
+                                break;
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                show_stop_modal = false;
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                break;
+                            }
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                break;
+                            }
+                            KeyCode::Char('p') => {
+                                show_pause_modal = true;
+                            }
+                            KeyCode::Char('s') => {
+                                show_stop_modal = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
+    
+    println!("ntkn is still counting in the background.");
+    println!("To pause counting: run 'ntkn pause'");
+    println!("To stop monitoring: run 'ntkn stop'");
+    Ok(())
+}
+
+fn create_fallback_state() -> watcher::DaemonState {
+    watcher::DaemonState {
+        pid: 0,
+        status: "Running".to_string(),
+        start_time: 0,
+        elapsed_seconds: 0,
+        last_updated: 0,
+        active_model: "Loading...".to_string(),
+        model_detected: false,
+        openai_gpt4o: 0,
+        anthropic_claude: 0,
+        google_gemini: 0,
+    }
 }
