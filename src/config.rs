@@ -62,12 +62,62 @@ pub fn verify_trust_interactive(path: &Path) -> Result<bool, std::io::Error> {
     println!("Do you trust the contents of this directory?");
     println!("Working with untrusted contents comes with higher risk of prompt injection.");
     println!("Trusting the directory allows project-local config, hooks, and exec policies to load.");
-    println!("\nChoices:\n1) Yes, continue\n2) No, quit");
+    println!();
 
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-    if trimmed == "1" || trimmed.to_lowercase() == "y" || trimmed.to_lowercase() == "yes" {
+    let options = vec!["Yes, continue", "No, quit"];
+    let mut selected = 0;
+
+    let print_menu = |selected_idx: usize| {
+        print!("\r");
+        for (i, opt) in options.iter().enumerate() {
+            if i == selected_idx {
+                print!("> \x1b[36m\x1b[1m{}\x1b[0m   ", opt);
+            } else {
+                print!("  {}   ", opt);
+            }
+        }
+        use std::io::Write;
+        std::io::stdout().flush().unwrap();
+    };
+
+    print_menu(selected);
+
+    crossterm::terminal::enable_raw_mode()?;
+
+    let result = loop {
+        if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+            if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                if key.kind == crossterm::event::KeyEventKind::Press {
+                    match key.code {
+                        crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Up => {
+                            if selected > 0 {
+                                selected -= 1;
+                                print_menu(selected);
+                            }
+                        }
+                        crossterm::event::KeyCode::Right | crossterm::event::KeyCode::Down => {
+                            if selected < options.len() - 1 {
+                                selected += 1;
+                                print_menu(selected);
+                            }
+                        }
+                        crossterm::event::KeyCode::Enter => {
+                            break selected == 0;
+                        }
+                        crossterm::event::KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                            break false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    };
+
+    crossterm::terminal::disable_raw_mode()?;
+    println!("\n");
+
+    if result {
         trust_path(path, &registry_file)?;
         Ok(true)
     } else {
