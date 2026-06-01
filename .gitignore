@@ -13,3 +13,8 @@
 
 # OS files
 .DS_Store
+
+# Agent frameworks / workspace artifacts
+.agents/
+.claude/
+.remember/
