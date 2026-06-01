@@ -60,3 +60,7 @@ pub fn spawn_daemon(path: &Path) -> Result<(), std::io::Error> {
 
     Ok(())
 }
+
+pub fn run_daemon(watch_path: PathBuf) -> Result<(), std::io::Error> {
+    crate::watcher::run_watcher_loop(watch_path)
+}
