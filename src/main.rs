@@ -173,5 +173,8 @@ fn create_fallback_state() -> watcher::DaemonState {
         openai_gpt4o: 0,
         anthropic_claude: 0,
         google_gemini: 0,
+        show_openai: true,
+        show_anthropic: true,
+        show_gemini: true,
     }
 }

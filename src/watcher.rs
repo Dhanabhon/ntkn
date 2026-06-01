@@ -7,7 +7,7 @@ use notify::{Watcher, RecursiveMode, Result as NotifyResult};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DaemonState {
     pub pid: u32,
-    pub status: String, // "Running" | "Paused" | "Stopped"
+    pub status: String,
     pub start_time: u64,
     pub elapsed_seconds: u64,
     pub last_updated: u64,
@@ -16,6 +16,9 @@ pub struct DaemonState {
     pub openai_gpt4o: usize,
     pub anthropic_claude: usize,
     pub google_gemini: usize,
+    pub show_openai: bool,
+    pub show_anthropic: bool,
+    pub show_gemini: bool,
 }
 
 pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
@@ -34,6 +37,7 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
         .as_secs();
 
+    let (has_openai, has_anthropic, has_gemini) = check_env_keys(&watch_path);
     let mut state = DaemonState {
         pid: my_pid,
         status: "Running".to_string(),
@@ -45,6 +49,9 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         openai_gpt4o: 0,
         anthropic_claude: 0,
         google_gemini: 0,
+        show_openai: has_openai,
+        show_anthropic: has_anthropic,
+        show_gemini: has_gemini,
     };
 
     // Initial scan
@@ -179,4 +186,59 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
         state.active_model = "Unrecognized".to_string();
         state.model_detected = false;
     }
+
+    let (has_openai, has_anthropic, has_gemini) = check_env_keys(path);
+    state.show_openai = has_openai;
+    state.show_anthropic = has_anthropic;
+    state.show_gemini = has_gemini;
+}
+
+fn check_env_keys(path: &Path) -> (bool, bool, bool) {
+    let mut has_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let mut has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let mut has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
+
+    // Check project-local .env file
+    let env_file = path.join(".env");
+    if env_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(env_file) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') { continue; }
+                if let Some(pos) = trimmed.find('=') {
+                    let key = trimmed[..pos].trim();
+                    let val = trimmed[pos+1..].trim();
+                    if !val.is_empty() && val != "\"\"" && val != "''" {
+                        if key == "OPENAI_API_KEY" { has_openai = true; }
+                        if key == "ANTHROPIC_API_KEY" { has_anthropic = true; }
+                        if key == "GEMINI_API_KEY" { has_gemini = true; }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also check AIDER_MODEL
+    if let Ok(val) = std::env::var("AIDER_MODEL") {
+        let val_lower = val.to_lowercase();
+        if val_lower.contains("gpt") || val_lower.contains("openai") { has_openai = true; }
+        if val_lower.contains("claude") || val_lower.contains("anthropic") { has_anthropic = true; }
+        if val_lower.contains("gemini") || val_lower.contains("google") { has_gemini = true; }
+    }
+
+    // Also check local config .ntkn.toml
+    let local_config = crate::config::load_local_config(path);
+    if let Some(ref model) = local_config.default_model {
+        let model_lower = model.to_lowercase();
+        if model_lower.contains("gpt") || model_lower.contains("openai") { has_openai = true; }
+        if model_lower.contains("claude") || model_lower.contains("anthropic") { has_anthropic = true; }
+        if model_lower.contains("gemini") || model_lower.contains("google") { has_gemini = true; }
+    }
+
+    // If none are detected, default to showing all of them
+    if !has_openai && !has_anthropic && !has_gemini {
+        return (true, true, true);
+    }
+
+    (has_openai, has_anthropic, has_gemini)
 }
