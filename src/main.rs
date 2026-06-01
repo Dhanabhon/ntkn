@@ -13,6 +13,7 @@ mod ui;
 mod config;
 mod daemon;
 mod watcher;
+mod stats;
 
 type DestructibleTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
@@ -72,10 +73,31 @@ fn run_app(terminal: &mut DestructibleTerminal) -> Result<(), io::Error> {
 
 fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && args[1] == "daemon" {
-        if args.len() > 3 && args[2] == "--watch" {
-            let path = std::path::PathBuf::from(&args[3]);
-            return daemon::run_daemon(path);
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "daemon" => {
+                if args.len() > 3 && args[2] == "--watch" {
+                    let path = std::path::PathBuf::from(&args[3]);
+                    return daemon::run_daemon(path);
+                }
+            }
+            "pause" => {
+                let current_dir = std::env::current_dir()?;
+                return daemon::modify_daemon_status(&current_dir, "Paused");
+            }
+            "resume" => {
+                let current_dir = std::env::current_dir()?;
+                return daemon::modify_daemon_status(&current_dir, "Running");
+            }
+            "stop" => {
+                let current_dir = std::env::current_dir()?;
+                return daemon::modify_daemon_status(&current_dir, "Stopped");
+            }
+            "stats" | "usage" => {
+                let current_dir = std::env::current_dir()?;
+                return stats::view_stats_chart(&current_dir);
+            }
+            _ => {}
         }
     }
 

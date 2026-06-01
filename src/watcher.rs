@@ -49,6 +49,13 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
 
     // Initial scan
     recalculate_state(&watch_path, &mut state);
+    let record = crate::stats::StatsRecord {
+        timestamp: now_secs,
+        openai: state.openai_gpt4o,
+        claude: state.anthropic_claude,
+        gemini: state.google_gemini,
+    };
+    let _ = crate::stats::log_historical_stats(&watch_path, &record);
     write_state(&state_file, &state)?;
 
     // Setup notify directory watcher
@@ -93,6 +100,16 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
 
             if file_changed {
                 recalculate_state(&watch_path, &mut state);
+                let record = crate::stats::StatsRecord {
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    openai: state.openai_gpt4o,
+                    claude: state.anthropic_claude,
+                    gemini: state.google_gemini,
+                };
+                let _ = crate::stats::log_historical_stats(&watch_path, &record);
             }
             
             state.last_updated = SystemTime::now()

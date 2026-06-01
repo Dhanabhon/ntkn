@@ -64,3 +64,18 @@ pub fn spawn_daemon(path: &Path) -> Result<(), std::io::Error> {
 pub fn run_daemon(watch_path: PathBuf) -> Result<(), std::io::Error> {
     crate::watcher::run_watcher_loop(watch_path)
 }
+
+pub fn modify_daemon_status(path: &Path, new_status: &str) -> Result<(), std::io::Error> {
+    let state_file = get_state_file_path(path);
+    if state_file.exists() {
+        let content = fs::read_to_string(&state_file)?;
+        if let Ok(mut state) = serde_json::from_str::<crate::watcher::DaemonState>(&content) {
+            state.status = new_status.to_string();
+            let content_updated = serde_json::to_string_pretty(&state)?;
+            let temp_path = state_file.with_extension("tmp");
+            fs::write(&temp_path, content_updated)?;
+            fs::rename(temp_path, &state_file)?;
+        }
+    }
+    Ok(())
+}
