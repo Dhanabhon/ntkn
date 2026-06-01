@@ -11,6 +11,7 @@ mod scanner;
 mod counter;
 mod ui;
 mod config;
+mod daemon;
 
 type DestructibleTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
