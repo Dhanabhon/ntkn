@@ -10,6 +10,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 mod scanner;
 mod counter;
 mod ui;
+mod config;
 
 type DestructibleTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
