@@ -1,4 +1,4 @@
-# ntkn (นับ token)
+# ntkn (นับโทเค็น)
 
 > [!WARNING]
 > This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
@@ -36,7 +36,7 @@
 You need a Rust toolchain (edition 2024). Clone the repository and build:
 
 ```bash
-git clone https://github.com/tomdhanabhon/ntkn.git
+git clone https://github.com/dhanabhon/ntkn.git
 cd ntkn
 cargo build --release
 ```
