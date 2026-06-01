@@ -29,10 +29,7 @@ pub fn is_daemon_running(path: &Path) -> bool {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
                 if pid > 0 {
                     // On macOS/Unix, kill -0 checks if process exists
-                    let status = Command::new("kill")
-                        .arg("-0")
-                        .arg(pid.to_string())
-                        .status();
+                    let status = Command::new("kill").arg("-0").arg(pid.to_string()).status();
                     let running = status.map(|s| s.success()).unwrap_or(false);
                     if running {
                         return true;

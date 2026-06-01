@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct StatsRecord {
@@ -11,8 +11,10 @@ pub struct StatsRecord {
 }
 
 pub fn log_historical_stats(path: &Path, record: &StatsRecord) -> Result<(), std::io::Error> {
-    let history_file = crate::daemon::get_state_file_path(path)
-        .with_file_name(format!("{}-history.json", crate::config::get_path_hash(path)));
+    let history_file = crate::daemon::get_state_file_path(path).with_file_name(format!(
+        "{}-history.json",
+        crate::config::get_path_hash(path)
+    ));
 
     let mut records: Vec<StatsRecord> = if history_file.exists() {
         let content = fs::read_to_string(&history_file)?;
@@ -23,7 +25,10 @@ pub fn log_historical_stats(path: &Path, record: &StatsRecord) -> Result<(), std
 
     // Avoid logging duplicates if values didn't change
     if let Some(last) = records.last() {
-        if last.openai == record.openai && last.claude == record.claude && last.gemini == record.gemini {
+        if last.openai == record.openai
+            && last.claude == record.claude
+            && last.gemini == record.gemini
+        {
             return Ok(());
         }
     }
@@ -38,8 +43,10 @@ pub fn log_historical_stats(path: &Path, record: &StatsRecord) -> Result<(), std
 }
 
 pub fn view_stats_chart(path: &Path) -> Result<(), std::io::Error> {
-    let history_file = crate::daemon::get_state_file_path(path)
-        .with_file_name(format!("{}-history.json", crate::config::get_path_hash(path)));
+    let history_file = crate::daemon::get_state_file_path(path).with_file_name(format!(
+        "{}-history.json",
+        crate::config::get_path_hash(path)
+    ));
 
     if !history_file.exists() {
         println!("No historical stats found for this project. Start monitoring first.");
@@ -59,10 +66,12 @@ pub fn view_stats_chart(path: &Path) -> Result<(), std::io::Error> {
     println!("OpenAI GPT-4o:     {}", latest.openai);
     println!("Claude 3.5 Sonnet: {}", latest.claude);
     println!("Gemini 1.5/2.0:    {}", latest.gemini);
-    
+
     let max = latest.openai.max(latest.claude.max(latest.gemini)) as f64;
     let render_bar = |val: usize| -> String {
-        if max == 0.0 { return String::new(); }
+        if max == 0.0 {
+            return String::new();
+        }
         let width = ((val as f64 / max) * 40.0) as usize;
         "█".repeat(width)
     };

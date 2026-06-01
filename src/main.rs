@@ -1,23 +1,23 @@
-use std::{io, path::PathBuf, time::Duration};
 use crossterm::{
-    execute,
-    terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
     cursor,
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::{io, path::PathBuf, time::Duration};
 
 mod config;
-mod scanner;
 mod counter;
-mod ui;
 mod daemon;
-mod watcher;
+mod scanner;
 mod stats;
+mod ui;
+mod watcher;
 
 fn main() -> Result<(), io::Error> {
     let args: Vec<String> = std::env::args().collect();
-    
+
     // Command line sub-routing
     if args.len() > 1 {
         match args[1].as_str() {
@@ -93,7 +93,8 @@ fn main() -> Result<(), io::Error> {
         // Read daemon state from local state JSON
         let state = if state_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&state_file) {
-                serde_json::from_str::<watcher::DaemonState>(&content).unwrap_or_else(|_| create_fallback_state())
+                serde_json::from_str::<watcher::DaemonState>(&content)
+                    .unwrap_or_else(|_| create_fallback_state())
             } else {
                 create_fallback_state()
             }
@@ -102,7 +103,13 @@ fn main() -> Result<(), io::Error> {
         };
 
         terminal.draw(|f| {
-            ui::draw(f, &state, &current_dir_str, show_pause_modal, show_stop_modal);
+            ui::draw(
+                f,
+                &state,
+                &current_dir_str,
+                show_pause_modal,
+                show_stop_modal,
+            );
         })?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -154,7 +161,7 @@ fn main() -> Result<(), io::Error> {
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
-    
+
     println!("ntkn is still counting in the background.");
     println!("To pause counting: run 'ntkn pause'");
     println!("To stop monitoring: run 'ntkn stop'");

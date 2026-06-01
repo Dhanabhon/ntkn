@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct TrustRegistry {
@@ -14,7 +14,7 @@ pub struct LocalConfig {
 }
 
 pub fn get_path_hash(path: &Path) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let absolute = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(absolute.to_string_lossy().as_bytes());
@@ -22,7 +22,10 @@ pub fn get_path_hash(path: &Path) -> String {
 }
 
 fn get_global_config_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".config").join("ntkn")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("ntkn")
 }
 
 pub fn is_path_trusted(path: &Path, registry_file: &Path) -> bool {
@@ -61,7 +64,9 @@ pub fn verify_trust_interactive(path: &Path) -> Result<bool, std::io::Error> {
 
     println!("Do you trust the contents of this directory?");
     println!("Working with untrusted contents comes with higher risk of prompt injection.");
-    println!("Trusting the directory allows project-local config, hooks, and exec policies to load.");
+    println!(
+        "Trusting the directory allows project-local config, hooks, and exec policies to load."
+    );
     println!();
 
     let options = vec!["Yes, continue", "No, quit"];
@@ -104,7 +109,11 @@ pub fn verify_trust_interactive(path: &Path) -> Result<bool, std::io::Error> {
                         crossterm::event::KeyCode::Enter => {
                             break selected == 0;
                         }
-                        crossterm::event::KeyCode::Char('c') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        crossterm::event::KeyCode::Char('c')
+                            if key
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        {
                             break false;
                         }
                         _ => {}
