@@ -156,15 +156,9 @@ pub fn draw(
     f.render_widget(table, chunks[1]);
 
     // 3. Gauges
-    let gpt_ratio = (state.openai_gpt4o as f64 / GPT4O_MAX as f64)
-        .min(1.0)
-        .max(0.0);
-    let claude_ratio = (state.anthropic_claude as f64 / CLAUDE_MAX as f64)
-        .min(1.0)
-        .max(0.0);
-    let gemini_ratio = (state.google_gemini as f64 / GEMINI_MAX as f64)
-        .min(1.0)
-        .max(0.0);
+    let gpt_ratio = (state.openai_gpt4o as f64 / GPT4O_MAX as f64).clamp(0.0, 1.0);
+    let claude_ratio = (state.anthropic_claude as f64 / CLAUDE_MAX as f64).clamp(0.0, 1.0);
+    let gemini_ratio = (state.google_gemini as f64 / GEMINI_MAX as f64).clamp(0.0, 1.0);
 
     let gpt_gauge = LineGauge::default()
         .block(Block::default().title("GPT-4o (128k)"))
@@ -258,4 +252,96 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::watcher::DaemonState;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_ui_draw_does_not_panic() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let state = DaemonState {
+            pid: 1234,
+            status: "Running".to_string(),
+            start_time: 100,
+            elapsed_seconds: 45,
+            last_updated: 200,
+            active_model: "GPT-4o".to_string(),
+            model_detected: true,
+            openai_gpt4o: 1000,
+            anthropic_claude: 2000,
+            google_gemini: 3000,
+            show_openai: true,
+            show_anthropic: true,
+            show_gemini: true,
+        };
+
+        terminal
+            .draw(|f| {
+                draw(f, &state, "/test/path", false, false);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_ui_draw_no_providers_does_not_panic() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let state = DaemonState {
+            pid: 1234,
+            status: "Running".to_string(),
+            start_time: 100,
+            elapsed_seconds: 45,
+            last_updated: 200,
+            active_model: "Unknown".to_string(),
+            model_detected: false,
+            openai_gpt4o: 0,
+            anthropic_claude: 0,
+            google_gemini: 0,
+            show_openai: false,
+            show_anthropic: false,
+            show_gemini: false,
+        };
+
+        terminal
+            .draw(|f| {
+                draw(f, &state, "/test/path", false, false);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_ui_draw_small_terminal_does_not_panic() {
+        let backend = TestBackend::new(0, 0);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let state = DaemonState {
+            pid: 1234,
+            status: "Running".to_string(),
+            start_time: 100,
+            elapsed_seconds: 45,
+            last_updated: 200,
+            active_model: "GPT-4o".to_string(),
+            model_detected: true,
+            openai_gpt4o: 1000,
+            anthropic_claude: 2000,
+            google_gemini: 3000,
+            show_openai: true,
+            show_anthropic: true,
+            show_gemini: true,
+        };
+
+        terminal
+            .draw(|f| {
+                draw(f, &state, "/test/path", true, true);
+            })
+            .unwrap();
+    }
 }
