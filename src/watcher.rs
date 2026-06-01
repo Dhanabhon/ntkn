@@ -70,6 +70,8 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
     let mut last_tick = std::time::Instant::now();
+    let mut prev_status = state.status.clone();
+
     loop {
         // Wait 250ms or respond to filesystem changes
         let file_changed = rx.recv_timeout(Duration::from_millis(250)).is_ok();
@@ -80,25 +82,38 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
             while rx.try_recv().is_ok() {}
         }
 
+        let mut status_changed = false;
         // Read command modifications made by CLI
         if let Ok(content) = fs::read_to_string(&state_file) {
             if let Ok(updated_state) = serde_json::from_str::<DaemonState>(&content) {
                 if updated_state.status == "Stopped" {
                     break;
                 }
-                state.status = updated_state.status;
+                if updated_state.status != state.status {
+                    state.status = updated_state.status.clone();
+                    status_changed = true;
+                }
             }
         }
 
+        let mut force_recalculate = false;
+        if status_changed && state.status == "Running" && prev_status == "Paused" {
+            force_recalculate = true;
+        }
+        prev_status = state.status.clone();
+
         if state.status == "Running" {
+            let mut state_changed = false;
+
             let elapsed = last_tick.elapsed();
             if elapsed >= Duration::from_secs(1) {
                 let secs = elapsed.as_secs();
                 state.elapsed_seconds += secs;
                 last_tick += Duration::from_secs(secs);
+                state_changed = true;
             }
 
-            if file_changed {
+            if file_changed || force_recalculate {
                 recalculate_state(&watch_path, &mut state);
                 let record = crate::stats::StatsRecord {
                     timestamp: SystemTime::now()
@@ -110,14 +125,24 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
                     gemini: state.google_gemini,
                 };
                 let _ = crate::stats::log_historical_stats(&watch_path, &record);
+                state_changed = true;
             }
             
-            state.last_updated = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
-                .as_secs();
-            write_state(&state_file, &state)?;
+            if state_changed || status_changed {
+                state.last_updated = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+                    .as_secs();
+                write_state(&state_file, &state)?;
+            }
         } else {
+            if status_changed {
+                state.last_updated = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+                    .as_secs();
+                write_state(&state_file, &state)?;
+            }
             // Keep timer tick reset while paused
             last_tick = std::time::Instant::now();
         }

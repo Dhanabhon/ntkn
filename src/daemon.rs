@@ -25,7 +25,7 @@ pub fn get_pid_file_path(path: &Path) -> PathBuf {
 pub fn is_daemon_running(path: &Path) -> bool {
     let pid_file = get_pid_file_path(path);
     if pid_file.exists() {
-        if let Ok(pid_str) = fs::read_to_string(pid_file) {
+        if let Ok(pid_str) = fs::read_to_string(&pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
                 if pid > 0 {
                     // On macOS/Unix, kill -0 checks if process exists
@@ -33,10 +33,15 @@ pub fn is_daemon_running(path: &Path) -> bool {
                         .arg("-0")
                         .arg(pid.to_string())
                         .status();
-                    return status.map(|s| s.success()).unwrap_or(false);
+                    let running = status.map(|s| s.success()).unwrap_or(false);
+                    if running {
+                        return true;
+                    }
                 }
             }
         }
+        // Clean up stale PID file if process is not running
+        let _ = fs::remove_file(pid_file);
     }
     false
 }
