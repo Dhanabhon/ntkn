@@ -71,6 +71,14 @@ fn run_app(terminal: &mut DestructibleTerminal) -> Result<(), io::Error> {
 }
 
 fn main() -> Result<(), io::Error> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "daemon" {
+        if args.len() > 3 && args[2] == "--watch" {
+            let path = std::path::PathBuf::from(&args[3]);
+            return daemon::run_daemon(path);
+        }
+    }
+
     // Set up a custom panic hook to guarantee that the terminal state is restored if the program crashes.
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {

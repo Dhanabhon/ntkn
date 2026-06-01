@@ -29,7 +29,10 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
     let my_pid = std::process::id();
     fs::write(&pid_file, my_pid.to_string())?;
 
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+        .as_secs();
 
     let mut state = DaemonState {
         pid: my_pid,
@@ -54,14 +57,21 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         if res.is_ok() {
             let _ = tx.send(());
         }
-    }).unwrap();
+    }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-    watcher.watch(&watch_path, RecursiveMode::Recursive).unwrap();
+    watcher.watch(&watch_path, RecursiveMode::Recursive)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
     let mut last_tick = std::time::Instant::now();
     loop {
         // Wait 250ms or respond to filesystem changes
         let file_changed = rx.recv_timeout(Duration::from_millis(250)).is_ok();
+
+        // Debounce: if file changed, wait a bit and drain mpsc channel to avoid redundant scans
+        if file_changed {
+            std::thread::sleep(Duration::from_millis(100));
+            while rx.try_recv().is_ok() {}
+        }
 
         // Read command modifications made by CLI
         if let Ok(content) = fs::read_to_string(&state_file) {
@@ -76,15 +86,19 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         if state.status == "Running" {
             let elapsed = last_tick.elapsed();
             if elapsed >= Duration::from_secs(1) {
-                state.elapsed_seconds += elapsed.as_secs();
-                last_tick = std::time::Instant::now();
+                let secs = elapsed.as_secs();
+                state.elapsed_seconds += secs;
+                last_tick += Duration::from_secs(secs);
             }
 
             if file_changed {
                 recalculate_state(&watch_path, &mut state);
             }
             
-            state.last_updated = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            state.last_updated = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+                .as_secs();
             write_state(&state_file, &state)?;
         } else {
             // Keep timer tick reset while paused
@@ -98,7 +112,10 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
 
 fn write_state(file_path: &Path, state: &DaemonState) -> Result<(), std::io::Error> {
     let content = serde_json::to_string_pretty(state)?;
-    fs::write(file_path, content)
+    let temp_path = file_path.with_extension("tmp");
+    fs::write(&temp_path, content)?;
+    fs::rename(temp_path, file_path)?;
+    Ok(())
 }
 
 fn recalculate_state(path: &Path, state: &mut DaemonState) {
