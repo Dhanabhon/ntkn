@@ -21,7 +21,7 @@ pub fn get_path_hash(path: &Path) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn get_global_config_dir() -> PathBuf {
+pub fn get_global_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")

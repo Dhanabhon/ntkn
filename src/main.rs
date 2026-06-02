@@ -10,6 +10,7 @@ use std::{io, path::PathBuf, time::Duration};
 mod config;
 mod counter;
 mod daemon;
+mod doctor;
 mod scanner;
 mod stats;
 mod ui;
@@ -88,6 +89,12 @@ fn main() -> Result<(), io::Error> {
 
     let mut show_pause_modal = false;
     let mut show_stop_modal = false;
+    let mut input_mode = ui::InputMode::Normal;
+    let mut input_buffer = String::new();
+    let mut selected_suggestion = 0;
+    let mut doctor_diagnostics = Vec::new();
+
+    let all_commands = ["/start", "/pause", "/resume", "/doctor", "/stop", "/quit"];
 
     loop {
         // Read daemon state from local state JSON
@@ -102,6 +109,22 @@ fn main() -> Result<(), io::Error> {
             create_fallback_state()
         };
 
+        let suggestions: Vec<&str> = if input_buffer.starts_with('/') {
+            all_commands
+                .iter()
+                .filter(|cmd| cmd.starts_with(&input_buffer))
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if suggestions.is_empty() {
+            selected_suggestion = 0;
+        } else if selected_suggestion >= suggestions.len() {
+            selected_suggestion = suggestions.len() - 1;
+        }
+
         terminal.draw(|f| {
             ui::draw(
                 f,
@@ -109,54 +132,148 @@ fn main() -> Result<(), io::Error> {
                 &current_dir_str,
                 show_pause_modal,
                 show_stop_modal,
-                ui::InputMode::Normal,
-                "",
-                &[],
-                0,
-                &[],
+                input_mode,
+                &input_buffer,
+                &suggestions,
+                selected_suggestion,
+                &doctor_diagnostics,
             );
         })?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if show_pause_modal {
-                        match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                let _ = daemon::modify_daemon_status(&current_dir, "Paused");
-                                show_pause_modal = false;
+                    match input_mode {
+                        ui::InputMode::Normal => {
+                            if show_pause_modal {
+                                match key.code {
+                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                        let _ =
+                                            daemon::modify_daemon_status(&current_dir, "Paused");
+                                        show_pause_modal = false;
+                                    }
+                                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                        show_pause_modal = false;
+                                    }
+                                    _ => {}
+                                }
+                            } else if show_stop_modal {
+                                match key.code {
+                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                        let _ =
+                                            daemon::modify_daemon_status(&current_dir, "Stopped");
+                                        break;
+                                    }
+                                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                        show_stop_modal = false;
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                match key.code {
+                                    KeyCode::Char('q') => {
+                                        break;
+                                    }
+                                    KeyCode::Char('c')
+                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        break;
+                                    }
+                                    KeyCode::Char('p') => {
+                                        show_pause_modal = true;
+                                    }
+                                    KeyCode::Char('s') => {
+                                        show_stop_modal = true;
+                                    }
+                                    KeyCode::Char('/') => {
+                                        input_mode = ui::InputMode::Editing;
+                                        input_buffer = "/".to_string();
+                                        selected_suggestion = 0;
+                                    }
+                                    _ => {}
+                                }
                             }
-                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                                show_pause_modal = false;
-                            }
-                            _ => {}
                         }
-                    } else if show_stop_modal {
-                        match key.code {
-                            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                let _ = daemon::modify_daemon_status(&current_dir, "Stopped");
-                                break;
+                        ui::InputMode::Editing => match key.code {
+                            KeyCode::Esc => {
+                                input_mode = ui::InputMode::Normal;
+                                input_buffer.clear();
+                                selected_suggestion = 0;
                             }
-                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                                show_stop_modal = false;
+                            KeyCode::Backspace => {
+                                input_buffer.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                input_buffer.push(c);
+                            }
+                            KeyCode::Up => {
+                                if !suggestions.is_empty() {
+                                    if selected_suggestion > 0 {
+                                        selected_suggestion -= 1;
+                                    } else {
+                                        selected_suggestion = suggestions.len() - 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Down => {
+                                if !suggestions.is_empty() {
+                                    if selected_suggestion < suggestions.len() - 1 {
+                                        selected_suggestion += 1;
+                                    } else {
+                                        selected_suggestion = 0;
+                                    }
+                                }
+                            }
+                            KeyCode::Tab => {
+                                if !suggestions.is_empty()
+                                    && selected_suggestion < suggestions.len()
+                                {
+                                    input_buffer = suggestions[selected_suggestion].to_string();
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let cmd = if !suggestions.is_empty()
+                                    && selected_suggestion < suggestions.len()
+                                {
+                                    suggestions[selected_suggestion]
+                                } else {
+                                    input_buffer.trim()
+                                };
+
+                                match cmd {
+                                    "/start" | "/resume" => {
+                                        let _ =
+                                            daemon::modify_daemon_status(&current_dir, "Running");
+                                        input_mode = ui::InputMode::Normal;
+                                        input_buffer.clear();
+                                    }
+                                    "/pause" => {
+                                        let _ =
+                                            daemon::modify_daemon_status(&current_dir, "Paused");
+                                        input_mode = ui::InputMode::Normal;
+                                        input_buffer.clear();
+                                    }
+                                    "/doctor" => {
+                                        doctor_diagnostics = doctor::run_diagnostics(&current_dir);
+                                        input_mode = ui::InputMode::DoctorView;
+                                        input_buffer.clear();
+                                    }
+                                    "/stop" | "/quit" => {
+                                        let _ =
+                                            daemon::modify_daemon_status(&current_dir, "Stopped");
+                                        break;
+                                    }
+                                    _ => {
+                                        input_mode = ui::InputMode::Normal;
+                                        input_buffer.clear();
+                                    }
+                                }
                             }
                             _ => {}
-                        }
-                    } else {
-                        match key.code {
-                            KeyCode::Char('q') => {
-                                break;
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                break;
-                            }
-                            KeyCode::Char('p') => {
-                                show_pause_modal = true;
-                            }
-                            KeyCode::Char('s') => {
-                                show_stop_modal = true;
-                            }
-                            _ => {}
+                        },
+                        ui::InputMode::DoctorView => {
+                            input_mode = ui::InputMode::Normal;
+                            doctor_diagnostics.clear();
                         }
                     }
                 }

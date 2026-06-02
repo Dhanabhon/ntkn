@@ -11,13 +11,16 @@
 
 1.  **Security Trust Gate:** On your first run in a folder, `ntkn` prompts you with a warning and allows you to trust the path using an interactive arrow-key selection menu before executing or reading local configs.
 2.  **Background Watcher Daemon:** When started, `ntkn` spawns a detached background daemon to watch your project folder (using `notify` with a 100ms settle debouncer) and tracks active development time with a drift-free timer.
-3.  **Real-Time TUI Dashboard:** Features a terminal UI monitor (built with `ratatui` and `crossterm`) showing total tokens, a comparação matrix, occupancy gauges, and interactive confirmation modals.
-4.  **CLI Controls:** Stop, pause, and resume the background monitor seamlessly using CLI commands:
+3.  **Real-Time TUI Dashboard:** Features a terminal UI monitor (built with `ratatui` and `crossterm`) showing total tokens, comparative matrix, occupancy gauges, and interactive confirmation modals.
+4.  **TUI Command Bar:** Type `/` inside the dashboard to open the interactive Command Bar. Supports matching suggestions popover list, navigation using `Up`/`Down` arrow keys, autocompletion with `Tab`, and execution with `Enter`.
+5.  **TUI Diagnostics (`/doctor`):** Run the `/doctor` command inside the Command Bar to display a centered diagnostics overlay check reporting on global configuration paths, directory trust status, background daemon PID details, local configuration validation, and API key setups.
+6.  **CLI Controls:** Stop, pause, and resume the background monitor seamlessly using CLI commands:
     *   `ntkn pause`: Pauses filesystem monitoring and the active timer.
     *   `ntkn resume`: Resumes tracking and forces a catch-up scan.
     *   `ntkn stop`: Shuts down the background process and cleans up lock files.
-5.  **TUI Usage Charts:** Run `ntkn stats` or `ntkn usage` to view a terminal bar chart of your historical token distribution across OpenAI, Anthropic Claude, and Google Gemini models.
-6.  **Local Configuration:** Place a `.ntkn.toml` configuration in your project root to customize exclusions (`ignored_dirs`) or pin the active model (`default_model`).
+7.  **TUI Usage Charts:** Run `ntkn stats` or `ntkn usage` to view a terminal bar chart of your historical token distribution across OpenAI, Anthropic Claude, and Google Gemini models.
+8.  **Local Configuration:** Place a `.ntkn.toml` configuration in your project root to customize exclusions (`ignored_dirs`) or pin the active model (`default_model`).
+
 
 ---
 
@@ -58,6 +61,12 @@ ntkn
     *   `q` or `Ctrl+C`: Exit TUI dashboard (the daemon will **keep counting** in the background).
     *   `p`: Triggers a popup modal to **pause** counting.
     *   `s`: Triggers a popup modal to **stop** counting and terminate the background daemon.
+    *   `/`: Activates the **Command Bar** footer.
+        *   Type commands (e.g. `/start`, `/pause`, `/resume`, `/doctor`, `/stop`, `/quit`).
+        *   Use `Up`/`Down` arrow keys to navigate the suggestions popup list.
+        *   Press `Tab` to autocomplete.
+        *   Press `Enter` to run the command.
+        *   Press `Esc` to cancel and return to Normal mode.
 
 ### 2. Manage the Background Daemon
 You can control the background watcher using CLI commands:

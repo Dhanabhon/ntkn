@@ -232,7 +232,9 @@ pub fn draw(
             let mut sugg_rows = Vec::new();
             for (i, sugg) in suggestions.iter().enumerate() {
                 if i == selected_suggestion {
-                    sugg_rows.push(Row::new(vec![Cell::from(format!("> {}", sugg)).fg(Color::Cyan).bold()]));
+                    sugg_rows.push(Row::new(vec![
+                        Cell::from(format!("> {}", sugg)).fg(Color::Cyan).bold(),
+                    ]));
                 } else {
                     sugg_rows.push(Row::new(vec![Cell::from(format!("  {}", sugg))]));
                 }
@@ -243,7 +245,8 @@ pub fn draw(
             f.render_widget(sugg_table, popup_area);
         }
     } else if input_mode == InputMode::Normal {
-        let footer_text = Paragraph::new("[p] Pause | [s] Stop | [/] Command Bar | [q] Exit (keeps counting)");
+        let footer_text =
+            Paragraph::new("[p] Pause | [s] Stop | [/] Command Bar | [q] Exit (keeps counting)");
         f.render_widget(footer_text, chunks[3]);
     }
 
@@ -283,13 +286,12 @@ pub fn draw(
             doc_rows.push(Row::new(vec![Cell::from(line.clone())]));
         }
 
-        let doc_table = Table::new(doc_rows, [Constraint::Percentage(100)])
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" ntkn Doctor Diagnostics ")
-                    .border_style(Style::default().fg(Color::Green)),
-            );
+        let doc_table = Table::new(doc_rows, [Constraint::Percentage(100)]).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" ntkn Doctor Diagnostics ")
+                .border_style(Style::default().fg(Color::Green)),
+        );
         f.render_widget(doc_table, area);
     }
 }
@@ -433,6 +435,67 @@ mod tests {
                     &[],
                     0,
                     &[],
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_ui_draw_editing_and_doctor_does_not_panic() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let state = DaemonState {
+            pid: 1234,
+            status: "Running".to_string(),
+            start_time: 100,
+            elapsed_seconds: 45,
+            last_updated: 200,
+            active_model: "GPT-4o".to_string(),
+            model_detected: true,
+            openai_gpt4o: 1000,
+            anthropic_claude: 2000,
+            google_gemini: 3000,
+            show_openai: true,
+            show_anthropic: true,
+            show_gemini: true,
+        };
+
+        // Draw Editing mode with suggestions
+        terminal
+            .draw(|f| {
+                draw(
+                    f,
+                    &state,
+                    "/test/path",
+                    false,
+                    false,
+                    InputMode::Editing,
+                    "/p",
+                    &["/pause", "/quit"],
+                    0,
+                    &[],
+                );
+            })
+            .unwrap();
+
+        // Draw DoctorView mode with diagnostic reports
+        terminal
+            .draw(|f| {
+                draw(
+                    f,
+                    &state,
+                    "/test/path",
+                    false,
+                    false,
+                    InputMode::DoctorView,
+                    "",
+                    &[],
+                    0,
+                    &[
+                        "--- Daemon Status ---".to_string(),
+                        "  [OK] Daemon is running.".to_string(),
+                    ],
                 );
             })
             .unwrap();
