@@ -17,12 +17,24 @@ fn format_duration(seconds: u64) -> String {
     format!("{:02}:{:02}:{:02}", hours, minutes, secs)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Editing,
+    DoctorView,
+}
+
 pub fn draw(
     f: &mut Frame,
     state: &DaemonState,
     current_dir: &str,
     show_pause_modal: bool,
     show_stop_modal: bool,
+    input_mode: InputMode,
+    input_buffer: &str,
+    suggestions: &[&str],
+    selected_suggestion: usize,
+    doctor_diagnostics: &[String],
 ) {
     let num_rows =
         (state.show_openai as u16) + (state.show_anthropic as u16) + (state.show_gemini as u16);
@@ -203,8 +215,37 @@ pub fn draw(
     }
 
     // 4. Footer Menu
-    let footer_text = Paragraph::new("[p] Pause | [s] Stop | [q] Exit (keeps counting)");
-    f.render_widget(footer_text, chunks[3]);
+    if input_mode == InputMode::Editing {
+        let footer_text = Paragraph::new(format!("Command: {}", input_buffer));
+        f.render_widget(footer_text, chunks[3]);
+
+        if !suggestions.is_empty() {
+            let num_suggs = suggestions.len();
+            let popup_area = Rect::new(
+                chunks[3].x + 2,
+                chunks[3].y.saturating_sub(num_suggs as u16 + 2),
+                30,
+                num_suggs as u16 + 2,
+            );
+            f.render_widget(Clear, popup_area);
+
+            let mut sugg_rows = Vec::new();
+            for (i, sugg) in suggestions.iter().enumerate() {
+                if i == selected_suggestion {
+                    sugg_rows.push(Row::new(vec![Cell::from(format!("> {}", sugg)).fg(Color::Cyan).bold()]));
+                } else {
+                    sugg_rows.push(Row::new(vec![Cell::from(format!("  {}", sugg))]));
+                }
+            }
+
+            let sugg_table = Table::new(sugg_rows, [Constraint::Percentage(100)])
+                .block(Block::default().borders(Borders::ALL).title(" Commands "));
+            f.render_widget(sugg_table, popup_area);
+        }
+    } else if input_mode == InputMode::Normal {
+        let footer_text = Paragraph::new("[p] Pause | [s] Stop | [/] Command Bar | [q] Exit (keeps counting)");
+        f.render_widget(footer_text, chunks[3]);
+    }
 
     // Modal Confirmation Dialogs
     if show_pause_modal || show_stop_modal {
@@ -231,6 +272,25 @@ pub fn draw(
             .block(modal_block)
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(p, area);
+    }
+
+    if input_mode == InputMode::DoctorView {
+        let area = centered_rect(80, 60, f.area());
+        f.render_widget(Clear, area);
+
+        let mut doc_rows = Vec::new();
+        for line in doctor_diagnostics {
+            doc_rows.push(Row::new(vec![Cell::from(line.clone())]));
+        }
+
+        let doc_table = Table::new(doc_rows, [Constraint::Percentage(100)])
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" ntkn Doctor Diagnostics ")
+                    .border_style(Style::default().fg(Color::Green)),
+            );
+        f.render_widget(doc_table, area);
     }
 }
 
@@ -284,7 +344,18 @@ mod tests {
 
         terminal
             .draw(|f| {
-                draw(f, &state, "/test/path", false, false);
+                draw(
+                    f,
+                    &state,
+                    "/test/path",
+                    false,
+                    false,
+                    InputMode::Normal,
+                    "",
+                    &[],
+                    0,
+                    &[],
+                );
             })
             .unwrap();
     }
@@ -312,7 +383,18 @@ mod tests {
 
         terminal
             .draw(|f| {
-                draw(f, &state, "/test/path", false, false);
+                draw(
+                    f,
+                    &state,
+                    "/test/path",
+                    false,
+                    false,
+                    InputMode::Normal,
+                    "",
+                    &[],
+                    0,
+                    &[],
+                );
             })
             .unwrap();
     }
@@ -340,7 +422,18 @@ mod tests {
 
         terminal
             .draw(|f| {
-                draw(f, &state, "/test/path", true, true);
+                draw(
+                    f,
+                    &state,
+                    "/test/path",
+                    true,
+                    true,
+                    InputMode::Normal,
+                    "",
+                    &[],
+                    0,
+                    &[],
+                );
             })
             .unwrap();
     }

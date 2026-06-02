@@ -109,6 +109,11 @@ fn main() -> Result<(), io::Error> {
                 &current_dir_str,
                 show_pause_modal,
                 show_stop_modal,
+                ui::InputMode::Normal,
+                "",
+                &[],
+                0,
+                &[],
             );
         })?;
 
