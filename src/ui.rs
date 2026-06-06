@@ -111,6 +111,11 @@ pub fn draw(
     let mut rows = Vec::new();
 
     if state.show_openai {
+        let name_cell = if is_gpt_active {
+            Cell::from(openai_name).bold()
+        } else {
+            Cell::from(format!("{} (Limit)", openai_name)).fg(Color::DarkGray)
+        };
         rows.push(
             Row::new(vec![
                 Cell::from(if is_gpt_active {
@@ -119,7 +124,7 @@ pub fn draw(
                     "  OpenAI"
                 })
                 .fg(Color::Green),
-                Cell::from(openai_name),
+                name_cell,
                 Cell::from(state.openai_gpt4o.to_string()),
                 Cell::from(openai_limit.to_string()),
                 Cell::from(format!("{:.2}%", gpt4o_pct)),
@@ -129,6 +134,11 @@ pub fn draw(
     }
 
     if state.show_anthropic {
+        let name_cell = if is_claude_active {
+            Cell::from(anthropic_name).bold()
+        } else {
+            Cell::from(format!("{} (Limit)", anthropic_name)).fg(Color::DarkGray)
+        };
         rows.push(
             Row::new(vec![
                 Cell::from(if is_claude_active {
@@ -137,7 +147,7 @@ pub fn draw(
                     "  Anthropic"
                 })
                 .fg(Color::Magenta),
-                Cell::from(anthropic_name),
+                name_cell,
                 Cell::from(state.anthropic_claude.to_string()),
                 Cell::from(anthropic_limit.to_string()),
                 Cell::from(format!("{:.2}%", claude_pct)),
@@ -147,6 +157,11 @@ pub fn draw(
     }
 
     if state.show_gemini {
+        let name_cell = if is_gemini_active {
+            Cell::from(gemini_name).bold()
+        } else {
+            Cell::from(format!("{} (Limit)", gemini_name)).fg(Color::DarkGray)
+        };
         rows.push(
             Row::new(vec![
                 Cell::from(if is_gemini_active {
@@ -155,7 +170,7 @@ pub fn draw(
                     "  Google"
                 })
                 .fg(Color::Yellow),
-                Cell::from(gemini_name),
+                name_cell,
                 Cell::from(state.google_gemini.to_string()),
                 Cell::from(gemini_limit.to_string()),
                 Cell::from(format!("{:.2}%", gemini_pct)),

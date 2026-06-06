@@ -295,11 +295,11 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
 }
 
 fn check_env_keys(path: &Path) -> (bool, bool, bool) {
-    // 1. Check project-local .env file
-    let mut local_openai = false;
-    let mut local_anthropic = false;
-    let mut local_gemini = false;
+    let mut has_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let mut has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let mut has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
 
+    // 1. Check project-local .env file
     let env_file = path.join(".env");
     if env_file.exists() {
         if let Ok(content) = std::fs::read_to_string(env_file) {
@@ -313,13 +313,13 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
                     let val = trimmed[pos + 1..].trim();
                     if !val.is_empty() && val != "\"\"" && val != "''" {
                         if key == "OPENAI_API_KEY" {
-                            local_openai = true;
+                            has_openai = true;
                         }
                         if key == "ANTHROPIC_API_KEY" {
-                            local_anthropic = true;
+                            has_anthropic = true;
                         }
                         if key == "GEMINI_API_KEY" {
-                            local_gemini = true;
+                            has_gemini = true;
                         }
                     }
                 }
@@ -328,10 +328,6 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
     }
 
     // 2. Check active model from config/env
-    let mut active_openai = false;
-    let mut active_anthropic = false;
-    let mut active_gemini = false;
-
     if let Some(model) = detect_active_model(path) {
         let model_lower = model.to_lowercase();
         if model_lower.contains("gpt")
@@ -339,51 +335,33 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
             || model_lower.contains("o1")
             || model_lower.contains("o3")
         {
-            active_openai = true;
+            has_openai = true;
         }
         if model_lower.contains("claude") || model_lower.contains("anthropic") {
-            active_anthropic = true;
+            has_anthropic = true;
         }
         if model_lower.contains("gemini") || model_lower.contains("google") {
-            active_gemini = true;
+            has_gemini = true;
         }
     }
 
     // 3. Check for local agent files in this directory
-    let mut has_aider = false;
-    let mut has_cursor = false;
-    let mut has_claude_code = false;
-
     if path.join(".aider.chat.history.md").exists() || path.join(".aider.conf.yml").exists() {
-        has_aider = true;
+        has_openai = true;
     }
     if path.join(".cursorrules").exists() {
-        has_cursor = true;
+        has_openai = true;
     }
     if path.join(".clauderc").exists() || path.join(".claude").exists() {
-        has_claude_code = true;
+        has_anthropic = true;
     }
 
-    // Global env fallbacks only if agent is active or project-local indicators exist
-    let global_openai = std::env::var("OPENAI_API_KEY").is_ok();
-    let global_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
-    let global_gemini = std::env::var("GEMINI_API_KEY").is_ok();
+    // If none are detected, default to showing all of them
+    if !has_openai && !has_anthropic && !has_gemini {
+        return (true, true, true);
+    }
 
-    let show_openai = local_openai
-        || active_openai
-        || (has_aider && global_openai)
-        || (has_cursor && global_openai);
-    let show_anthropic = local_anthropic
-        || active_anthropic
-        || (has_aider && global_anthropic)
-        || has_claude_code
-        || (has_cursor && global_anthropic);
-    let show_gemini = local_gemini
-        || active_gemini
-        || (has_aider && global_gemini)
-        || (has_cursor && global_gemini);
-
-    (show_openai, show_anthropic, show_gemini)
+    (has_openai, has_anthropic, has_gemini)
 }
 
 #[cfg(test)]
@@ -417,5 +395,31 @@ mod tests {
         assert_eq!(state.anthropic_limit, None);
         assert_eq!(state.gemini_model_name, None);
         assert_eq!(state.gemini_limit, None);
+    }
+
+    #[test]
+    fn test_notify_events() {
+        let temp_dir = std::env::temp_dir().join("test_ntkn_notify");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |res: NotifyResult<notify::Event>| {
+            if res.is_ok() {
+                let _ = tx.send(());
+            }
+        })
+        .unwrap();
+
+        watcher
+            .watch(&temp_dir, notify::RecursiveMode::Recursive)
+            .unwrap();
+
+        std::fs::write(temp_dir.join("test.txt"), "hello").unwrap();
+
+        let received = rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        assert!(received, "Should receive file change event");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
