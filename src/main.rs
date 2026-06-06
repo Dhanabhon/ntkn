@@ -51,6 +51,11 @@ fn main() -> Result<(), io::Error> {
 
     // Default Interactive Startup
     let current_dir = std::env::current_dir()?;
+    println!(
+        "Welcome to {} v{}\n",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    );
     if !config::verify_trust_interactive(&current_dir)? {
         println!("Exiting.");
         return Ok(());
