@@ -36,8 +36,11 @@ pub fn draw(
     selected_suggestion: usize,
     doctor_diagnostics: &[String],
 ) {
-    let num_rows =
+    let mut num_rows =
         (state.show_openai as u16) + (state.show_anthropic as u16) + (state.show_gemini as u16);
+    if num_rows == 0 {
+        num_rows = 1;
+    }
     let table_height = num_rows + 4; // Header row + borders/spacing
 
     let chunks = Layout::default()
@@ -79,10 +82,16 @@ pub fn draw(
     let openai_name = state.openai_model_name.as_deref().unwrap_or("GPT-4o");
     let openai_limit = state.openai_limit.unwrap_or(GPT4O_MAX);
 
-    let anthropic_name = state.anthropic_model_name.as_deref().unwrap_or("Claude 3.5 Sonnet");
+    let anthropic_name = state
+        .anthropic_model_name
+        .as_deref()
+        .unwrap_or("Claude 3.5 Sonnet");
     let anthropic_limit = state.anthropic_limit.unwrap_or(CLAUDE_MAX);
 
-    let gemini_name = state.gemini_model_name.as_deref().unwrap_or("Gemini 1.5/2.0");
+    let gemini_name = state
+        .gemini_model_name
+        .as_deref()
+        .unwrap_or("Gemini 1.5/2.0");
     let gemini_limit = state.gemini_limit.unwrap_or(GEMINI_MAX);
 
     let gpt4o_pct = (state.openai_gpt4o as f64 / openai_limit as f64) * 100.0;
@@ -90,7 +99,10 @@ pub fn draw(
     let gemini_pct = (state.google_gemini as f64 / gemini_limit as f64) * 100.0;
 
     let active_model_lower = state.active_model.to_lowercase();
-    let is_gpt_active = active_model_lower.contains("gpt") || active_model_lower.contains("openai") || active_model_lower.contains("o1") || active_model_lower.contains("o3");
+    let is_gpt_active = active_model_lower.contains("gpt")
+        || active_model_lower.contains("openai")
+        || active_model_lower.contains("o1")
+        || active_model_lower.contains("o3");
     let is_claude_active =
         active_model_lower.contains("claude") || active_model_lower.contains("anthropic");
     let is_gemini_active =
@@ -152,6 +164,20 @@ pub fn draw(
         );
     }
 
+    if rows.is_empty() {
+        rows.push(
+            Row::new(vec![
+                Cell::from("No active AI agent/provider detected in this directory")
+                    .fg(Color::DarkGray),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+                Cell::from(""),
+            ])
+            .height(1),
+        );
+    }
+
     let table = Table::new(
         rows,
         [
@@ -196,7 +222,11 @@ pub fn draw(
         .filled_style(Style::default().fg(Color::Cyan))
         .ratio(gpt_ratio);
     let claude_gauge = LineGauge::default()
-        .block(Block::default().title(format!("{} ({})", anthropic_name, format_limit(anthropic_limit))))
+        .block(Block::default().title(format!(
+            "{} ({})",
+            anthropic_name,
+            format_limit(anthropic_limit)
+        )))
         .filled_style(Style::default().fg(Color::Magenta))
         .ratio(claude_ratio);
     let gemini_gauge = LineGauge::default()

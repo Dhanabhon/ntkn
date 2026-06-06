@@ -188,6 +188,71 @@ fn write_state(file_path: &Path, state: &DaemonState) -> Result<(), std::io::Err
     Ok(())
 }
 
+fn detect_aider_conf_model(path: &Path) -> Option<String> {
+    let conf_file = path.join(".aider.conf.yml");
+    if conf_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(conf_file) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("model:") {
+                    let model = trimmed["model:".len()..].trim();
+                    let clean = model.trim_matches(|c| c == '\'' || c == '"');
+                    if !clean.is_empty() {
+                        return Some(clean.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn detect_aider_model(path: &Path) -> Option<String> {
+    let history_file = path.join(".aider.chat.history.md");
+    if history_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(history_file) {
+            for line in content.lines().rev() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("# Model:") {
+                    let model = trimmed["# Model:".len()..].trim();
+                    if !model.is_empty() {
+                        return Some(model.to_string());
+                    }
+                } else if trimmed.contains("Model:") {
+                    if let Some(idx) = trimmed.find("Model:") {
+                        let model = trimmed[idx + "Model:".len()..].trim();
+                        if !model.is_empty() {
+                            let clean: String = model
+                                .chars()
+                                .filter(|&c| c != '`' && c != '[' && c != ']')
+                                .collect();
+                            return Some(clean);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn detect_active_model(path: &Path) -> Option<String> {
+    let local_config = crate::config::load_local_config(path);
+    if let Some(ref model) = local_config.default_model {
+        return Some(model.clone());
+    }
+    if let Ok(val) = std::env::var("AIDER_MODEL") {
+        return Some(val);
+    }
+    if let Some(model) = detect_aider_conf_model(path) {
+        return Some(model);
+    }
+    if let Some(model) = detect_aider_model(path) {
+        return Some(model);
+    }
+    None
+}
+
 fn recalculate_state(path: &Path, state: &mut DaemonState) {
     let scanned_text = crate::scanner::ProjectScanner::scan_project(path);
     let counts = crate::counter::TokenCounter::calculate_all(&scanned_text);
@@ -196,12 +261,8 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
     state.google_gemini = counts.google_gemini;
 
     // Detect model fallback logic
-    let local_config = crate::config::load_local_config(path);
-    if let Some(ref model) = local_config.default_model {
-        state.active_model = model.clone();
-        state.model_detected = true;
-    } else if let Ok(val) = std::env::var("AIDER_MODEL") {
-        state.active_model = val;
+    if let Some(model) = detect_active_model(path) {
+        state.active_model = model;
         state.model_detected = true;
     } else {
         state.active_model = "Unrecognized".to_string();
@@ -209,17 +270,21 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
     }
 
     // Resolve model details for each provider
+    let local_config = crate::config::load_local_config(path);
     let custom_limits = &local_config.custom_limits;
 
-    let openai_details = crate::models::resolve_model_details(&state.active_model, "openai", custom_limits);
+    let openai_details =
+        crate::models::resolve_model_details(&state.active_model, "openai", custom_limits);
     state.openai_model_name = Some(openai_details.display_name);
     state.openai_limit = Some(openai_details.limit);
 
-    let anthropic_details = crate::models::resolve_model_details(&state.active_model, "anthropic", custom_limits);
+    let anthropic_details =
+        crate::models::resolve_model_details(&state.active_model, "anthropic", custom_limits);
     state.anthropic_model_name = Some(anthropic_details.display_name);
     state.anthropic_limit = Some(anthropic_details.limit);
 
-    let gemini_details = crate::models::resolve_model_details(&state.active_model, "google", custom_limits);
+    let gemini_details =
+        crate::models::resolve_model_details(&state.active_model, "google", custom_limits);
     state.gemini_model_name = Some(gemini_details.display_name);
     state.gemini_limit = Some(gemini_details.limit);
 
@@ -230,11 +295,11 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
 }
 
 fn check_env_keys(path: &Path) -> (bool, bool, bool) {
-    let mut has_openai = std::env::var("OPENAI_API_KEY").is_ok();
-    let mut has_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
-    let mut has_gemini = std::env::var("GEMINI_API_KEY").is_ok();
+    // 1. Check project-local .env file
+    let mut local_openai = false;
+    let mut local_anthropic = false;
+    let mut local_gemini = false;
 
-    // Check project-local .env file
     let env_file = path.join(".env");
     if env_file.exists() {
         if let Ok(content) = std::fs::read_to_string(env_file) {
@@ -248,13 +313,13 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
                     let val = trimmed[pos + 1..].trim();
                     if !val.is_empty() && val != "\"\"" && val != "''" {
                         if key == "OPENAI_API_KEY" {
-                            has_openai = true;
+                            local_openai = true;
                         }
                         if key == "ANTHROPIC_API_KEY" {
-                            has_anthropic = true;
+                            local_anthropic = true;
                         }
                         if key == "GEMINI_API_KEY" {
-                            has_gemini = true;
+                            local_gemini = true;
                         }
                     }
                 }
@@ -262,41 +327,63 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
         }
     }
 
-    // Also check AIDER_MODEL
-    if let Ok(val) = std::env::var("AIDER_MODEL") {
-        let val_lower = val.to_lowercase();
-        if val_lower.contains("gpt") || val_lower.contains("openai") {
-            has_openai = true;
-        }
-        if val_lower.contains("claude") || val_lower.contains("anthropic") {
-            has_anthropic = true;
-        }
-        if val_lower.contains("gemini") || val_lower.contains("google") {
-            has_gemini = true;
-        }
-    }
+    // 2. Check active model from config/env
+    let mut active_openai = false;
+    let mut active_anthropic = false;
+    let mut active_gemini = false;
 
-    // Also check local config .ntkn.toml
-    let local_config = crate::config::load_local_config(path);
-    if let Some(ref model) = local_config.default_model {
+    if let Some(model) = detect_active_model(path) {
         let model_lower = model.to_lowercase();
-        if model_lower.contains("gpt") || model_lower.contains("openai") {
-            has_openai = true;
+        if model_lower.contains("gpt")
+            || model_lower.contains("openai")
+            || model_lower.contains("o1")
+            || model_lower.contains("o3")
+        {
+            active_openai = true;
         }
         if model_lower.contains("claude") || model_lower.contains("anthropic") {
-            has_anthropic = true;
+            active_anthropic = true;
         }
         if model_lower.contains("gemini") || model_lower.contains("google") {
-            has_gemini = true;
+            active_gemini = true;
         }
     }
 
-    // If none are detected, default to showing all of them
-    if !has_openai && !has_anthropic && !has_gemini {
-        return (true, true, true);
+    // 3. Check for local agent files in this directory
+    let mut has_aider = false;
+    let mut has_cursor = false;
+    let mut has_claude_code = false;
+
+    if path.join(".aider.chat.history.md").exists() || path.join(".aider.conf.yml").exists() {
+        has_aider = true;
+    }
+    if path.join(".cursorrules").exists() {
+        has_cursor = true;
+    }
+    if path.join(".clauderc").exists() {
+        has_claude_code = true;
     }
 
-    (has_openai, has_anthropic, has_gemini)
+    // Global env fallbacks only if agent is active or project-local indicators exist
+    let global_openai = std::env::var("OPENAI_API_KEY").is_ok();
+    let global_anthropic = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let global_gemini = std::env::var("GEMINI_API_KEY").is_ok();
+
+    let show_openai = local_openai
+        || active_openai
+        || (has_aider && global_openai)
+        || (has_cursor && global_openai);
+    let show_anthropic = local_anthropic
+        || active_anthropic
+        || (has_aider && global_anthropic)
+        || has_claude_code
+        || (has_cursor && global_anthropic);
+    let show_gemini = local_gemini
+        || active_gemini
+        || (has_aider && global_gemini)
+        || (has_cursor && global_gemini);
+
+    (show_openai, show_anthropic, show_gemini)
 }
 
 #[cfg(test)]

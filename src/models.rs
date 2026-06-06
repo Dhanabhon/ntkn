@@ -76,7 +76,9 @@ pub fn resolve_model_details(
         "openai" => {
             let limit = if clean_name_lower.contains("gpt-4o-mini") {
                 128_000
-            } else if clean_name_lower.contains("gpt-4o") || clean_name_lower.contains("gpt-4-turbo") {
+            } else if clean_name_lower.contains("gpt-4o")
+                || clean_name_lower.contains("gpt-4-turbo")
+            {
                 128_000
             } else if clean_name_lower.contains("o1") || clean_name_lower.contains("o3") {
                 if clean_name_lower.contains("preview") || clean_name_lower.contains("mini") {
@@ -100,13 +102,17 @@ pub fn resolve_model_details(
             }
         }
         "anthropic" => {
-            let limit = if clean_name_lower.contains("claude-3-5") || clean_name_lower.contains("claude-3.5") {
+            let limit = if clean_name_lower.contains("claude-3-5")
+                || clean_name_lower.contains("claude-3.5")
+            {
                 200_000
             } else if clean_name_lower.contains("claude-3") {
                 200_000
             } else if clean_name_lower.contains("claude-2.1") {
                 200_000
-            } else if clean_name_lower.contains("claude-2.0") || clean_name_lower.contains("claude-2") {
+            } else if clean_name_lower.contains("claude-2.0")
+                || clean_name_lower.contains("claude-2")
+            {
                 100_000
             } else if clean_name_lower.contains("claude-instant") {
                 100_000
@@ -120,9 +126,14 @@ pub fn resolve_model_details(
             }
         }
         "google" => {
-            let limit = if clean_name_lower.contains("gemini-1.5-pro") || clean_name_lower.contains("gemini-2.5-pro") {
+            let limit = if clean_name_lower.contains("gemini-1.5-pro")
+                || clean_name_lower.contains("gemini-2.5-pro")
+            {
                 2_097_152
-            } else if clean_name_lower.contains("gemini-1.5-flash") || clean_name_lower.contains("gemini-2.0-flash") || clean_name_lower.contains("gemini-2.5-flash") {
+            } else if clean_name_lower.contains("gemini-1.5-flash")
+                || clean_name_lower.contains("gemini-2.0-flash")
+                || clean_name_lower.contains("gemini-2.5-flash")
+            {
                 1_048_576
             } else if clean_name_lower.contains("gemini-1.0-pro") {
                 32_768
