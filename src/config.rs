@@ -11,6 +11,7 @@ pub struct TrustRegistry {
 pub struct LocalConfig {
     pub ignored_dirs: Option<Vec<String>>,
     pub default_model: Option<String>,
+    pub custom_limits: Option<std::collections::HashMap<String, usize>>,
 }
 
 pub fn get_path_hash(path: &Path) -> String {

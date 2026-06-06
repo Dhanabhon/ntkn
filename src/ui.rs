@@ -76,12 +76,21 @@ pub fn draw(
     f.render_widget(header_paragraph, chunks[0]);
 
     // 2. Table Matrix
-    let gpt4o_pct = (state.openai_gpt4o as f64 / GPT4O_MAX as f64) * 100.0;
-    let claude_pct = (state.anthropic_claude as f64 / CLAUDE_MAX as f64) * 100.0;
-    let gemini_pct = (state.google_gemini as f64 / GEMINI_MAX as f64) * 100.0;
+    let openai_name = state.openai_model_name.as_deref().unwrap_or("GPT-4o");
+    let openai_limit = state.openai_limit.unwrap_or(GPT4O_MAX);
+
+    let anthropic_name = state.anthropic_model_name.as_deref().unwrap_or("Claude 3.5 Sonnet");
+    let anthropic_limit = state.anthropic_limit.unwrap_or(CLAUDE_MAX);
+
+    let gemini_name = state.gemini_model_name.as_deref().unwrap_or("Gemini 1.5/2.0");
+    let gemini_limit = state.gemini_limit.unwrap_or(GEMINI_MAX);
+
+    let gpt4o_pct = (state.openai_gpt4o as f64 / openai_limit as f64) * 100.0;
+    let claude_pct = (state.anthropic_claude as f64 / anthropic_limit as f64) * 100.0;
+    let gemini_pct = (state.google_gemini as f64 / gemini_limit as f64) * 100.0;
 
     let active_model_lower = state.active_model.to_lowercase();
-    let is_gpt_active = active_model_lower.contains("gpt") || active_model_lower.contains("openai");
+    let is_gpt_active = active_model_lower.contains("gpt") || active_model_lower.contains("openai") || active_model_lower.contains("o1") || active_model_lower.contains("o3");
     let is_claude_active =
         active_model_lower.contains("claude") || active_model_lower.contains("anthropic");
     let is_gemini_active =
@@ -98,9 +107,9 @@ pub fn draw(
                     "  OpenAI"
                 })
                 .fg(Color::Green),
-                Cell::from("GPT-4o"),
+                Cell::from(openai_name),
                 Cell::from(state.openai_gpt4o.to_string()),
-                Cell::from(GPT4O_MAX.to_string()),
+                Cell::from(openai_limit.to_string()),
                 Cell::from(format!("{:.2}%", gpt4o_pct)),
             ])
             .height(1),
@@ -116,9 +125,9 @@ pub fn draw(
                     "  Anthropic"
                 })
                 .fg(Color::Magenta),
-                Cell::from("Claude 3.5 Sonnet"),
+                Cell::from(anthropic_name),
                 Cell::from(state.anthropic_claude.to_string()),
-                Cell::from(CLAUDE_MAX.to_string()),
+                Cell::from(anthropic_limit.to_string()),
                 Cell::from(format!("{:.2}%", claude_pct)),
             ])
             .height(1),
@@ -134,9 +143,9 @@ pub fn draw(
                     "  Google"
                 })
                 .fg(Color::Yellow),
-                Cell::from("Gemini 1.5/2.0"),
+                Cell::from(gemini_name),
                 Cell::from(state.google_gemini.to_string()),
-                Cell::from(GEMINI_MAX.to_string()),
+                Cell::from(gemini_limit.to_string()),
                 Cell::from(format!("{:.2}%", gemini_pct)),
             ])
             .height(1),
@@ -168,20 +177,30 @@ pub fn draw(
     f.render_widget(table, chunks[1]);
 
     // 3. Gauges
-    let gpt_ratio = (state.openai_gpt4o as f64 / GPT4O_MAX as f64).clamp(0.0, 1.0);
-    let claude_ratio = (state.anthropic_claude as f64 / CLAUDE_MAX as f64).clamp(0.0, 1.0);
-    let gemini_ratio = (state.google_gemini as f64 / GEMINI_MAX as f64).clamp(0.0, 1.0);
+    let gpt_ratio = (state.openai_gpt4o as f64 / openai_limit as f64).clamp(0.0, 1.0);
+    let claude_ratio = (state.anthropic_claude as f64 / anthropic_limit as f64).clamp(0.0, 1.0);
+    let gemini_ratio = (state.google_gemini as f64 / gemini_limit as f64).clamp(0.0, 1.0);
+
+    let format_limit = |limit: usize| {
+        if limit >= 1_000_000 {
+            format!("{}M", limit as f64 / 1_000_000.0)
+        } else if limit >= 1000 {
+            format!("{}k", limit / 1000)
+        } else {
+            limit.to_string()
+        }
+    };
 
     let gpt_gauge = LineGauge::default()
-        .block(Block::default().title("GPT-4o (128k)"))
+        .block(Block::default().title(format!("{} ({})", openai_name, format_limit(openai_limit))))
         .filled_style(Style::default().fg(Color::Cyan))
         .ratio(gpt_ratio);
     let claude_gauge = LineGauge::default()
-        .block(Block::default().title("Claude 3.5 Sonnet (200k)"))
+        .block(Block::default().title(format!("{} ({})", anthropic_name, format_limit(anthropic_limit))))
         .filled_style(Style::default().fg(Color::Magenta))
         .ratio(claude_ratio);
     let gemini_gauge = LineGauge::default()
-        .block(Block::default().title("Gemini 1.5 (1M)"))
+        .block(Block::default().title(format!("{} ({})", gemini_name, format_limit(gemini_limit))))
         .filled_style(Style::default().fg(Color::Yellow))
         .ratio(gemini_ratio);
 
@@ -342,6 +361,12 @@ mod tests {
             show_openai: true,
             show_anthropic: true,
             show_gemini: true,
+            openai_model_name: None,
+            openai_limit: None,
+            anthropic_model_name: None,
+            anthropic_limit: None,
+            gemini_model_name: None,
+            gemini_limit: None,
         };
 
         terminal
@@ -381,6 +406,12 @@ mod tests {
             show_openai: false,
             show_anthropic: false,
             show_gemini: false,
+            openai_model_name: None,
+            openai_limit: None,
+            anthropic_model_name: None,
+            anthropic_limit: None,
+            gemini_model_name: None,
+            gemini_limit: None,
         };
 
         terminal
@@ -420,6 +451,12 @@ mod tests {
             show_openai: true,
             show_anthropic: true,
             show_gemini: true,
+            openai_model_name: None,
+            openai_limit: None,
+            anthropic_model_name: None,
+            anthropic_limit: None,
+            gemini_model_name: None,
+            gemini_limit: None,
         };
 
         terminal
@@ -459,6 +496,12 @@ mod tests {
             show_openai: true,
             show_anthropic: true,
             show_gemini: true,
+            openai_model_name: None,
+            openai_limit: None,
+            anthropic_model_name: None,
+            anthropic_limit: None,
+            gemini_model_name: None,
+            gemini_limit: None,
         };
 
         // Draw Editing mode with suggestions

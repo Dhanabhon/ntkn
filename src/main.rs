@@ -11,6 +11,7 @@ mod config;
 mod counter;
 mod daemon;
 mod doctor;
+mod models;
 mod scanner;
 mod stats;
 mod ui;
@@ -305,5 +306,11 @@ fn create_fallback_state() -> watcher::DaemonState {
         show_openai: true,
         show_anthropic: true,
         show_gemini: true,
+        openai_model_name: None,
+        openai_limit: None,
+        anthropic_model_name: None,
+        anthropic_limit: None,
+        gemini_model_name: None,
+        gemini_limit: None,
     }
 }

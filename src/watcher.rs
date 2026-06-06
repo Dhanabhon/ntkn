@@ -19,6 +19,19 @@ pub struct DaemonState {
     pub show_openai: bool,
     pub show_anthropic: bool,
     pub show_gemini: bool,
+
+    #[serde(default)]
+    pub openai_model_name: Option<String>,
+    #[serde(default)]
+    pub openai_limit: Option<usize>,
+    #[serde(default)]
+    pub anthropic_model_name: Option<String>,
+    #[serde(default)]
+    pub anthropic_limit: Option<usize>,
+    #[serde(default)]
+    pub gemini_model_name: Option<String>,
+    #[serde(default)]
+    pub gemini_limit: Option<usize>,
 }
 
 pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
@@ -52,6 +65,12 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
         show_openai: has_openai,
         show_anthropic: has_anthropic,
         show_gemini: has_gemini,
+        openai_model_name: None,
+        openai_limit: None,
+        anthropic_model_name: None,
+        anthropic_limit: None,
+        gemini_model_name: None,
+        gemini_limit: None,
     };
 
     // Initial scan
@@ -189,6 +208,21 @@ fn recalculate_state(path: &Path, state: &mut DaemonState) {
         state.model_detected = false;
     }
 
+    // Resolve model details for each provider
+    let custom_limits = &local_config.custom_limits;
+
+    let openai_details = crate::models::resolve_model_details(&state.active_model, "openai", custom_limits);
+    state.openai_model_name = Some(openai_details.display_name);
+    state.openai_limit = Some(openai_details.limit);
+
+    let anthropic_details = crate::models::resolve_model_details(&state.active_model, "anthropic", custom_limits);
+    state.anthropic_model_name = Some(anthropic_details.display_name);
+    state.anthropic_limit = Some(anthropic_details.limit);
+
+    let gemini_details = crate::models::resolve_model_details(&state.active_model, "google", custom_limits);
+    state.gemini_model_name = Some(gemini_details.display_name);
+    state.gemini_limit = Some(gemini_details.limit);
+
     let (has_openai, has_anthropic, has_gemini) = check_env_keys(path);
     state.show_openai = has_openai;
     state.show_anthropic = has_anthropic;
@@ -263,4 +297,38 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
     }
 
     (has_openai, has_anthropic, has_gemini)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_state_backward_compatibility() {
+        let old_json = r#"{
+            "pid": 1234,
+            "status": "Running",
+            "start_time": 100,
+            "elapsed_seconds": 45,
+            "last_updated": 200,
+            "active_model": "gpt-3.5-turbo",
+            "model_detected": true,
+            "openai_gpt4o": 1000,
+            "anthropic_claude": 2000,
+            "google_gemini": 3000,
+            "show_openai": true,
+            "show_anthropic": true,
+            "show_gemini": true
+        }"#;
+
+        let state: DaemonState = serde_json::from_str(old_json).unwrap();
+        assert_eq!(state.pid, 1234);
+        assert_eq!(state.active_model, "gpt-3.5-turbo");
+        assert_eq!(state.openai_model_name, None);
+        assert_eq!(state.openai_limit, None);
+        assert_eq!(state.anthropic_model_name, None);
+        assert_eq!(state.anthropic_limit, None);
+        assert_eq!(state.gemini_model_name, None);
+        assert_eq!(state.gemini_limit, None);
+    }
 }
