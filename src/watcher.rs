@@ -360,7 +360,7 @@ fn check_env_keys(path: &Path) -> (bool, bool, bool) {
     if path.join(".cursorrules").exists() {
         has_cursor = true;
     }
-    if path.join(".clauderc").exists() {
+    if path.join(".clauderc").exists() || path.join(".claude").exists() {
         has_claude_code = true;
     }
 
