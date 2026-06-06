@@ -32,6 +32,15 @@
 *   **Active Model Detection:** Automatically detected via environment variables (like `AIDER_MODEL`), config files (`.aider.conf.yml`), or pinned in `.ntkn.toml`.
 *   **Exclusion Matching:** Traverses folders using `ignore` (respecting your `.gitignore` and skipping binaries).
 
+### Scope of Token Counting (ขอบเขตการนับโทเค็น)
+
+> [!NOTE]
+> `ntkn` **ไม่ได้นับจำนวน Token ทั้งหมดที่ถูกเรียกเก็บเงินจริงจาก API ของผู้ให้บริการ (API Billing Tokens)** 
+> เนื่องจาก `ntkn` ทำหน้าที่เป็นเพียงตัวสังเกตการณ์ภายนอกโปรเจกต์ (External Observer) ไม่ได้เข้าไปแทรกแซงหรือรับรู้ข้อมูลประวัติการคุยสดของคุณกับ AI Agent
+
+*   **สิ่งที่ `ntkn` นับ (Project Context Size):** ขนาดปริมาณ Token ของไฟล์โค้ดและทรัพยากรต่าง ๆ ในโปรเจกต์ของคุณที่พร้อมจะถูกส่งเข้าไปเป็นบริบท (Context Payload) ให้ AI Agent นำไปอ่านและทำความเข้าใจโปรเจกต์ ซึ่งปกติจะเป็น **ต้นทุนหลักส่วนใหญ่ (Input Tokens)** ของการใช้งาน AI Agent
+*   **สิ่งที่ไม่ได้นับ (Excluded):** ข้อความที่คุณป้อนคำสั่งล่าสุด (User Prompt), ประวัติการแชทย้อนหลังทั้งหมด (Chat History), และผลลัพธ์คำตอบที่ AI ส่งกลับมา (Output Tokens) ซึ่งส่วนหลังเหล่านี้เป็นความลับและประมวลผลอยู่บน API ของแต่ละค่ายโดยตรง
+
 ---
 
 ## Install

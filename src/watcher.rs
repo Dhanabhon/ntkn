@@ -87,8 +87,47 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
     // Setup notify directory watcher
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |res: NotifyResult<notify::Event>| {
-        if res.is_ok() {
-            let _ = tx.send(());
+        if let Ok(event) = res {
+            // Check if all paths in this event are inside ignored directories
+            let all_ignored = !event.paths.is_empty() && event.paths.iter().all(|p| {
+                for component in p.components() {
+                    if let Some(name) = component.as_os_str().to_str() {
+                        let name_lower = name.to_lowercase();
+                        if name_lower == ".git"
+                            || name_lower == ".claude"
+                            || name_lower == "build"
+                            || name_lower == ".dart_tool"
+                            || name_lower == ".gradle"
+                            || name_lower == "pods"
+                            || name_lower == "node_modules"
+                            || name_lower == "target"
+                            || name_lower == ".config"
+                            || name_lower == ".remember"
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            });
+
+            if all_ignored {
+                return;
+            }
+
+            // Only care about actual content changes (data modifications, renames, creations, and removals).
+            // Exclude metadata/access changes to avoid self-triggering infinite loops when reading files.
+            let should_trigger = match event.kind {
+                notify::EventKind::Create(_) => true,
+                notify::EventKind::Remove(_) => true,
+                notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => true,
+                notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => true,
+                notify::EventKind::Modify(notify::event::ModifyKind::Any) => true,
+                _ => false,
+            };
+            if should_trigger {
+                let _ = tx.send(());
+            }
         }
     })
     .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -102,7 +141,14 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
 
     loop {
         // Wait 250ms or respond to filesystem changes
-        let file_changed = rx.recv_timeout(Duration::from_millis(250)).is_ok();
+        let file_changed = match rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(_) => true,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => false,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                std::thread::sleep(Duration::from_millis(250));
+                false
+            }
+        };
 
         // Debounce: if file changed, wait a bit and drain mpsc channel to avoid redundant scans
         if file_changed {
@@ -177,6 +223,7 @@ pub fn run_watcher_loop(watch_path: PathBuf) -> Result<(), std::io::Error> {
     }
 
     let _ = fs::remove_file(&pid_file);
+    drop(watcher);
     Ok(())
 }
 
@@ -256,6 +303,7 @@ fn detect_active_model(path: &Path) -> Option<String> {
 fn recalculate_state(path: &Path, state: &mut DaemonState) {
     let scanned_text = crate::scanner::ProjectScanner::scan_project(path);
     let counts = crate::counter::TokenCounter::calculate_all(&scanned_text);
+
     state.openai_gpt4o = counts.openai_gpt4o;
     state.anthropic_claude = counts.anthropic_claude;
     state.google_gemini = counts.google_gemini;
