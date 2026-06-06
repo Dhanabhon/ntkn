@@ -98,6 +98,44 @@ default_model = "anthropic_claude"
 
 ---
 
+## Development & Testing
+
+If you are developing or editing `ntkn` and want to test changes in other directories on your machine without compiling and installing a release binary every time, you can run cargo directly pointing to the `ntkn` source path.
+
+1. Navigate to the project directory you want to monitor:
+   ```bash
+   cd /path/to/any/other/project
+   ```
+
+2. Run `ntkn` via cargo with `--manifest-path` (substitute `/Users/tom/Projects/GitHub/ntkn` with your actual local `ntkn` path):
+   ```bash
+   cargo run --manifest-path /Users/tom/Projects/GitHub/ntkn/Cargo.toml
+   ```
+
+3. To pass subcommands or arguments:
+   ```bash
+   cargo run --manifest-path /Users/tom/Projects/GitHub/ntkn/Cargo.toml -- stats
+   cargo run --manifest-path /Users/tom/Projects/GitHub/ntkn/Cargo.toml -- stop
+   ```
+
+### 💡 Development Pro-Tip: Shell Helper
+To avoid typing the long `--manifest-path` prefix every time, you can temporarily declare a shell function in your current terminal session:
+
+```bash
+ntkn-dev() {
+    cargo run --manifest-path /Users/tom/Projects/GitHub/ntkn/Cargo.toml -- "$@"
+}
+```
+
+Now you can simply run:
+```bash
+ntkn-dev        # Start TUI dashboard
+ntkn-dev stats  # View stats bar chart
+ntkn-dev stop   # Stop background daemon
+```
+
+---
+
 ## License
 
 Distributed under the MIT License. See `LICENSE` for details.
