@@ -104,7 +104,7 @@ fn main() -> Result<(), io::Error> {
 
     loop {
         // Read daemon state from local state JSON
-        let state = if state_file.exists() {
+        let mut state = if state_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&state_file) {
                 serde_json::from_str::<watcher::DaemonState>(&content)
                     .unwrap_or_else(|_| create_fallback_state())
@@ -114,6 +114,17 @@ fn main() -> Result<(), io::Error> {
         } else {
             create_fallback_state()
         };
+
+        // Calculate real-time elapsed seconds to prevent freezing during daemon scans
+        if state.status == "Running" && state.last_updated > 0 {
+            if let Ok(now_duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                let now_secs = now_duration.as_secs();
+                if now_secs > state.last_updated {
+                    let extra = now_secs - state.last_updated;
+                    state.elapsed_seconds += extra;
+                }
+            }
+        }
 
         let suggestions: Vec<&str> = if input_buffer.starts_with('/') {
             all_commands
