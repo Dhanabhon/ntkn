@@ -14,15 +14,64 @@ accounting local.
 
 ## How it works
 
-1. Run `ntkn init --project <NAME>` in a project.
-2. ntkn creates a local SQLite database, rules file, and supported hook scripts.
-3. Your AI tool fires its Stop/stop event after an agent turn.
-4. The hook reads token usage from the tool payload or transcript.
-5. The hook calls `ntkn record` with provider, model, prompt tokens, and
-   completion tokens.
-6. Run `ntkn usage` to view totals grouped by provider and model.
+```text
+=======================================================================
+                   NTKN WORKFLOW ARCHITECTURE
+=======================================================================
 
-Everything is stored in the project directory. No token usage is sent to a
+[ Your Project Folder ]
+ |-- code_files...
+ |-- .ntkn/                         <-- created by `ntkn init`
+ |   |-- rules/
+ |   |   `-- ntkn-rules.md           <-- project id, budget, and token rules
+ |   |-- hooks/
+ |   |   |-- claude-code/
+ |   |   |   `-- ntkn-record.sh
+ |   |   `-- codex/
+ |   |       `-- ntkn-record.sh
+ |   `-- ntkn.sqlite                 <-- local token database for this project
+ |-- .claude/settings.json           <-- Claude Code hook wiring
+ |-- .cursor/hooks.json              <-- Cursor hook wiring
+ `-- .agy/hooks.json                 <-- Antigravity hook wiring
+
+
+THE EXECUTION LOOP
+
+  [ User ]
+      |
+      | 1. Start an AI agent chat as usual.
+      v
++---------------------------+
+| AI Agent CLI              | 2. The tool runs with this project context.
+| Claude / Codex / Cursor   |
+| Antigravity (`agy`)       |
++------------+--------------+
+             |
+             | 3. The tool sends the prompt to the selected provider.
+             v
+      AI Provider
+      Claude / OpenAI / Gemini / Local model
+             |
+             | 4. The provider returns a response and usage metadata.
+             v
++---------------------------+
+| AI Agent CLI              | 5. The answer is shown to the user.
++------------+--------------+
+             |
+             | 6. Background Stop/stop hook runs after the turn.
+             |    The hook reads token usage from a payload or transcript.
+             |
+             |    Example:
+             |    ntkn record --provider agy --model <name> --prompt <P> --comp <C>
+             v
++---------------------------+
+| ntkn (Rust CLI)           | 7. ntkn writes the usage row to `.ntkn/ntkn.sqlite`.
++---------------------------+
+
+=======================================================================
+```
+
+Everything stays in the project directory. ntkn does not send token usage to a
 remote service.
 
 ## What it stores
