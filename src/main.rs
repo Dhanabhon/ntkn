@@ -62,8 +62,8 @@ enum Command {
         prompt: i64,
         #[arg(long = "comp")]
         completion: i64,
-        #[arg(long, default_value_t = 0)]
-        duration: i64,
+        #[arg(long)]
+        duration: Option<i64>,
     },
     /// Show token totals for the current project.
     Status,
@@ -467,12 +467,16 @@ fn record(
     model: &str,
     prompt: i64,
     completion: i64,
-    duration: i64,
+    duration: Option<i64>,
 ) -> AppResult<()> {
     validate_required(project, "project")?;
     validate_required(model, "model")?;
     validate_tokens(prompt, "prompt")?;
     validate_tokens(completion, "comp")?;
+    let duration = match duration {
+        Some(value) => value,
+        None => default_duration_ms()?,
+    };
     validate_tokens(duration, "duration")?;
     let total = add_tokens(prompt, completion)?;
 
@@ -694,11 +698,33 @@ fn current_project_id() -> AppResult<String> {
     Err(format!("{} is missing project_id", path.display()))
 }
 
+fn default_duration_ms() -> AppResult<i64> {
+    let path = rules_path()?;
+    let content = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "could not read {}; run `ntkn init --project <NAME>` first: {error}",
+            path.display()
+        )
+    })?;
+
+    for line in content.lines() {
+        if let Some(value) = line.trim().strip_prefix("default_duration_ms:") {
+            let value = frontmatter_value(value);
+            return value.parse::<i64>().map_err(|error| {
+                format!("{} has invalid default_duration_ms: {error}", path.display())
+            });
+        }
+    }
+
+    Ok(0)
+}
+
 fn default_rules(project: &str) -> String {
     format!(
         r#"---
 project_id: {}
 budget_limit: 100000
+default_duration_ms: 0
 ---
 
 # ntkn Rules

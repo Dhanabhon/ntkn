@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records prompt tokens, completion tokens, model name, and optional execution
@@ -77,8 +77,18 @@ Record a call:
 ntkn record --project my-project --model gpt-5 --prompt 1200 --comp 300 --duration 5400
 ```
 
-`--duration` is optional and uses milliseconds. If you omit it, `ntkn` stores
-`0`.
+`--duration` is optional and uses milliseconds. If you omit it, `ntkn` uses
+`default_duration_ms` from `.ntkn/rules/ntkn-rules.md`.
+
+`ntkn init` creates this default:
+
+```yaml
+default_duration_ms: 0
+```
+
+Change it once per project if you want omitted durations to use a fixed value.
+For example, `default_duration_ms: 5400` records `5.4s` for calls that do not
+pass `--duration`.
 
 Show totals for the current project:
 
