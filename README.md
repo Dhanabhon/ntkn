@@ -1,12 +1,86 @@
 # ntkn (นับโทเค็น)
 
-> [!WARNING]
-> This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
+`ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
+It records prompt tokens, completion tokens, model name, and optional execution
+time in a SQLite database inside the current project.
 
-`ntkn` (pronounced "nub-token" 🇹🇭) is a blazing-fast, lightweight CLI TUI written in Rust. It counts the tokens in a project folder and shows how much of each LLM's context window they would fill, helping you monitor consumption and costs when developing with AI agents on macOS.
+It is designed for hooks. Call `ntkn record` after an API request and keep the
+accounting local.
 
----
+## what it stores
 
-## License
+`ntkn init` creates this layout:
 
-Distributed under the MIT License. See `LICENSE` for details.
+```text
+.agents/
+  ntkn.sqlite
+  rules/
+    ntkn-rules.md
+```
+
+The SQLite database stores one row per call. The rules file stores the
+`project_id` used by `status` and `history`.
+
+## build
+
+```sh
+cargo build --release
+```
+
+The binary is written to `target/release/ntkn`.
+
+## usage
+
+Initialize a project:
+
+```sh
+ntkn init --project my-project
+```
+
+Record a call:
+
+```sh
+ntkn record --project my-project --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+```
+
+`--duration` is optional and uses milliseconds. If you omit it, `ntkn` stores
+`0`.
+
+Show totals for the current project:
+
+```sh
+ntkn status
+```
+
+`status` groups usage by model. It shows prompt tokens, completion tokens, total
+tokens, total time, and average tokens per second. If duration is `0`, speed is
+shown as `-`.
+
+Show recent rows:
+
+```sh
+ntkn history --limit 20
+```
+
+## schema
+
+```sql
+CREATE TABLE usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  prompt_tokens INTEGER NOT NULL,
+  completion_tokens INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  timestamp TEXT NOT NULL
+);
+```
+
+## hook notes
+
+`record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
+`ntkn init --project <name>` once per project before wiring the hook.
+
+## license
+
+MIT. See `LICENSE`.
