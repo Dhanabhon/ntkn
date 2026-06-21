@@ -15,5 +15,7 @@
 # Agent frameworks / local workspace artifacts
 /.agents/
 /.claude/
+/.codex/
+/.ntkn/
 /.remember/
 /docs/

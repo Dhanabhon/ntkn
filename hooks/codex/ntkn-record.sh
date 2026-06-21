@@ -36,7 +36,8 @@ if [[ -z "$session_id" ]]; then
 fi
 
 rules="$project_dir/.agents/rules/ntkn-rules.md"
-state="$project_dir/.agents/ntkn-codex-state.json"
+state="$project_dir/.ntkn/codex-state.json"
+legacy_state="$project_dir/.agents/ntkn-codex-state.json"
 
 if [[ ! -f "$rules" ]]; then
   finish
@@ -71,6 +72,9 @@ if [[ -z "$project_id" ]]; then
 fi
 
 mkdir -p "$(dirname "$state")"
+if [[ ! -s "$state" && -s "$legacy_state" ]]; then
+  cp "$legacy_state" "$state"
+fi
 if [[ ! -s "$state" ]]; then
   echo '{"sessions":{}}' >"$state"
 fi

@@ -193,38 +193,54 @@ totals with `ntkn status`.
 
 ### Codex
 
-`ntkn init` installs a Codex Stop hook that records usage after each turn.
+Unlike RTK (which hooks shell commands via `RTK.md`), ntkn records Codex API
+token usage through a **Stop hook**. Codex skips untrusted hooks silently, so
+you must approve the hook once before totals update automatically.
+
+`ntkn init` installs:
+
+- Project recorder: `.agents/hooks/codex/ntkn-record.sh`
+- Global dispatcher: `~/.codex/hooks/ntkn-dispatch.sh`
+- Global wiring: `~/.codex/hooks.json` (created if missing)
 
 Layout after init:
 
 ```text
 .agents/
   ntkn.sqlite
-  ntkn-codex-state.json
   hooks/
     codex/
       ntkn-record.sh
   rules/
     ntkn-rules.md
-.codex/
+.ntkn/
+  codex-state.json
+~/.codex/
+  hooks/
+    ntkn-dispatch.sh
   hooks.json
 ```
 
 Codex session JSONL files emit `token_count` events with a per-turn
 `last_token_usage` block. The hook records all new events since the last Stop
-and deduplicates by timestamp in `.agents/ntkn-codex-state.json`. Usage is
-grouped by model, so model switches within a session are tracked separately.
+and deduplicates by timestamp in `.ntkn/codex-state.json`. Usage is grouped by
+model, so model switches within a session are tracked separately.
 
 Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
 - Run `ntkn init --project <name>` once in the project root
-- **Trust the Stop hook in Codex with `/hooks`** — Codex skips untrusted hooks
-  silently, so usage will not be recorded until you approve it. Re-trust after
+- **Trust the ntkn Stop hook in Codex with `/hooks`** — until you approve it,
+  `ntkn status` will stay stale even while Codex is working. Re-trust after
   hook script updates.
 
-Hook wiring in `.codex/hooks.json`:
+After init you should see `Recording token usage (ntkn)` at the end of Codex
+turns (similar to how RTK surfaces proxied commands). If you still have a
+project `.codex/hooks.json` from an older setup, remove it to avoid
+double-recording.
+
+Hook wiring in `~/.codex/hooks.json`:
 
 ```json
 {
@@ -235,12 +251,9 @@ Hook wiring in `.codex/hooks.json`:
           {
             "type": "command",
             "command": "bash",
-            "args": [
-              "-c",
-              "exec \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.agents/hooks/codex/ntkn-record.sh\""
-            ],
+            "args": ["/Users/you/.codex/hooks/ntkn-dispatch.sh"],
             "timeout": 30,
-            "statusMessage": "Recording token usage"
+            "statusMessage": "Recording token usage (ntkn)"
           }
         ]
       }
@@ -252,9 +265,9 @@ Hook wiring in `.codex/hooks.json`:
 Codex Stop hooks must print JSON on stdout. The bundled script always exits
 with `{"continue":true}` so it never blocks the agent.
 
-If `.codex/hooks.json` already exists, `ntkn init` leaves it unchanged. Merge
-the Stop hook block above manually, or copy from `hooks/codex/hooks.json` in
-this repo.
+If `~/.codex/hooks.json` already exists, `ntkn init` leaves it unchanged and
+prints a merge note. Copy the Stop block from `hooks/codex/global-hooks.json`
+in this repo.
 
 Prompt-side counts use input plus cached input tokens. Completion counts use
 output plus reasoning tokens from the turn's `last_token_usage`.
@@ -279,4 +292,4 @@ files keep working or document the migration path in the pull request.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).

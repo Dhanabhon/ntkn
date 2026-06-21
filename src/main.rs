@@ -22,7 +22,9 @@ const CLAUDE_SETTINGS_CONTENT: &str = include_str!("../hooks/claude-code/setting
 const CODEX_HOOK_SCRIPT: &str = "hooks/codex/ntkn-record.sh";
 const CODEX_HOOKS_FILE: &str = "hooks.json";
 const CODEX_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/codex/ntkn-record.sh");
-const CODEX_HOOKS_CONTENT: &str = include_str!("../hooks/codex/hooks.json");
+const CODEX_DISPATCH_SCRIPT_CONTENT: &str = include_str!("../hooks/codex/ntkn-dispatch.sh");
+const CODEX_GLOBAL_HOOKS_TEMPLATE: &str = include_str!("../hooks/codex/global-hooks.json");
+const CODEX_DISPATCH_ARG: &str = "__NTKN_DISPATCH__";
 
 #[derive(Parser)]
 #[command(
@@ -133,8 +135,9 @@ fn print_splash() {
     println!("  .agents/rules/ntkn-rules.md");
     println!("  .agents/hooks/claude-code/ntkn-record.sh");
     println!("  .agents/hooks/codex/ntkn-record.sh");
+    println!("  ~/.codex/hooks/ntkn-dispatch.sh");
+    println!("  ~/.codex/hooks.json");
     println!("  .claude/settings.json");
-    println!("  .codex/hooks.json");
 }
 
 fn init(project: &str) -> AppResult<()> {
@@ -158,7 +161,8 @@ fn init(project: &str) -> AppResult<()> {
     let claude_hook_path = install_claude_code_hooks()?;
     let claude_settings_path = install_claude_code_settings()?;
     let codex_hook_path = install_codex_hooks()?;
-    let codex_hooks_path = install_codex_hooks_config()?;
+    let codex_dispatch_path = install_global_codex_hook()?;
+    warn_about_project_codex_hooks()?;
 
     println!(
         "{}",
@@ -180,7 +184,12 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
-        format!("codex hooks: {}", codex_hooks_path.display()).dimmed()
+        format!("codex dispatch: {}", codex_dispatch_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        "Codex: open /hooks and trust the ntkn Stop hook once (required)."
+            .yellow()
     );
     Ok(())
 }
@@ -447,17 +456,17 @@ Check totals with `ntkn status`.
 
 ## Codex
 
-`ntkn init` installs a Stop hook at `.agents/hooks/codex/ntkn-record.sh`
-and wires it from `.codex/hooks.json`. After each turn, the hook reads the
-latest `last_token_usage` from Codex session JSONL and appends new usage rows
-to `.agents/ntkn.sqlite`.
+`ntkn init` installs a project hook at `.agents/hooks/codex/ntkn-record.sh`
+and a global dispatcher at `~/.codex/hooks/ntkn-dispatch.sh` wired from
+`~/.codex/hooks.json`. After each turn, the hook reads new `token_count`
+events from Codex session JSONL and appends usage rows to `.agents/ntkn.sqlite`.
 
 Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
-- Trust the hook in Codex with `/hooks` after the first run. Codex skips
-  untrusted hooks silently.
+- Trust the ntkn Stop hook in Codex with `/hooks` once. Codex skips untrusted
+  hooks silently.
 
 Check totals with `ntkn status`.
 "#,
@@ -519,20 +528,82 @@ fn install_codex_hooks() -> AppResult<PathBuf> {
     Ok(hook_path)
 }
 
-fn install_codex_hooks_config() -> AppResult<PathBuf> {
-    let hooks_dir = codex_hooks_dir()?;
+fn install_global_codex_hook() -> AppResult<PathBuf> {
+    let codex_home = codex_home()?;
+    let hooks_dir = codex_home.join("hooks");
     fs::create_dir_all(&hooks_dir)
         .map_err(|error| format!("could not create {}: {error}", hooks_dir.display()))?;
 
-    let hooks_path = hooks_dir.join(CODEX_HOOKS_FILE);
+    let dispatch_path = hooks_dir.join("ntkn-dispatch.sh");
+    fs::write(&dispatch_path, CODEX_DISPATCH_SCRIPT_CONTENT).map_err(|error| {
+        format!(
+            "could not write {}: {error}",
+            dispatch_path.display()
+        )
+    })?;
+    make_executable(&dispatch_path)?;
+
+    let hooks_path = codex_home.join(CODEX_HOOKS_FILE);
+    let dispatch_arg = dispatch_path.display().to_string();
+    let hooks_content = CODEX_GLOBAL_HOOKS_TEMPLATE.replace(CODEX_DISPATCH_ARG, &dispatch_arg);
+
     if hooks_path.exists() {
-        return Ok(hooks_path);
+        let existing = fs::read_to_string(&hooks_path).map_err(|error| {
+            format!(
+                "could not read {}: {error}",
+                hooks_path.display()
+            )
+        })?;
+        if existing.contains("ntkn-dispatch.sh") {
+            return Ok(dispatch_path);
+        }
+
+        println!(
+            "{}",
+            format!(
+                "note: {} already exists; merge the Stop hook from hooks/codex/global-hooks.json",
+                hooks_path.display()
+            )
+            .yellow()
+        );
+        return Ok(dispatch_path);
     }
 
-    fs::write(&hooks_path, CODEX_HOOKS_CONTENT)
-        .map_err(|error| format!("could not write {}: {error}", hooks_path.display()))?;
+    fs::write(&hooks_path, hooks_content).map_err(|error| {
+        format!(
+            "could not write {}: {error}",
+            hooks_path.display()
+        )
+    })?;
 
-    Ok(hooks_path)
+    Ok(dispatch_path)
+}
+
+fn warn_about_project_codex_hooks() -> AppResult<()> {
+    let project_hooks = codex_hooks_dir()?.join(CODEX_HOOKS_FILE);
+    if !project_hooks.exists() {
+        return Ok(());
+    }
+
+    println!(
+        "{}",
+        format!(
+            "note: remove {} to avoid double-recording; ntkn uses ~/.codex/hooks.json",
+            project_hooks.display()
+        )
+        .yellow()
+    );
+    Ok(())
+}
+
+fn codex_home() -> AppResult<PathBuf> {
+    if let Ok(home) = env::var("CODEX_HOME") {
+        return Ok(PathBuf::from(home));
+    }
+
+    let home = env::var("HOME")
+        .map_err(|error| format!("could not resolve home directory: {error}"))?;
+    Ok(PathBuf::from(home).join(".codex"))
 }
 
 fn codex_hook_script_path() -> AppResult<PathBuf> {
