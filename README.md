@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.11.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.11.1-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, and completion tokens in a
@@ -112,15 +112,13 @@ hook payloads or plugin events include enough token data.
 
 ## Supported tools
 
-| Icon | Tool | Provider | Hook event | Wiring | Automatic recording | Manual fallback |
-| --- | --- | --- | --- | --- | --- | --- |
-| <img src="https://thesvg.org/icons/claude/default.svg" alt="Claude" width="20" height="20"> | Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
-| <img src="https://thesvg.org/icons/codex/default.svg" alt="Codex" width="20" height="20"> | Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
-| <img src="https://thesvg.org/icons/cursor/default.svg" alt="Cursor" width="20" height="20"> | Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
-| <img src="https://thesvg.org/icons/google/default.svg" alt="Google" width="20" height="20"> | Antigravity | Google / Multi-provider | stop | `.agy/hooks.json` → `.agy/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-agy` |
-| <img src="https://thesvg.org/icons/opencode/default.svg" alt="OpenCode" width="20" height="20"> | OpenCode | Multi-provider | session.idle | `.opencode/plugins/ntkn.js` → `.ntkn/hooks/opencode/ntkn-record.sh` | Yes, when plugin event includes usage metadata | `ntkn sync-opencode` |
-
-Tool icons are loaded from [theSVG](https://thesvg.org/).
+| Tool | Provider | Hook event | Wiring | Automatic recording | Manual fallback |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
+| Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
+| Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
+| Antigravity | Google / Multi-provider | stop | `.agy/hooks.json` → `.agy/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-agy` |
+| OpenCode | Multi-provider | session.idle | `.opencode/plugins/ntkn.js` → `.ntkn/hooks/opencode/ntkn-record.sh` | Yes, when plugin event includes usage metadata | `ntkn sync-opencode` |
 
 Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
 slug in Cursor or Antigravity (multi-provider routing) are separate usage
@@ -168,6 +166,7 @@ ntkn
 | Command | Description |
 | --- | --- |
 | `ntkn` | Print splash, version, command list, and local data paths |
+| `ntkn -h`, `ntkn --help` | Print the same splash output as `ntkn` |
 | `ntkn -V`, `ntkn --version` | Print version |
 | `ntkn init --project <NAME>` | Create `.ntkn/`, hooks, and rules for the current directory |
 | `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM>` | Append one usage row |
@@ -189,6 +188,13 @@ Print the version:
 ```sh
 ntkn -V
 ntkn --version
+```
+
+Print the splash and command guide:
+
+```sh
+ntkn -h
+ntkn --help
 ```
 
 Initialize a project:

@@ -1,5 +1,5 @@
 use chrono::{Datelike, Duration, NaiveDate, Utc};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use rusqlite::{Connection, params};
@@ -47,9 +47,12 @@ const OPENCODE_PLUGIN_CONTENT: &str = include_str!("../hooks/opencode/plugin.js"
     name = "ntkn",
     version,
     about = "Nub Token : Local Token Tracker for AI Agents",
-    arg_required_else_help = false
+    arg_required_else_help = false,
+    disable_help_flag = true
 )]
 struct Cli {
+    #[arg(short = 'h', long = "help", action = ArgAction::SetTrue)]
+    help: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -135,7 +138,13 @@ fn main() -> ExitCode {
 }
 
 fn run() -> AppResult<()> {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+    if cli.help {
+        print_splash();
+        return Ok(());
+    }
+
+    match cli.command {
         Some(Command::Init { project }) => init(&project),
         Some(Command::Record {
             project,
@@ -176,7 +185,7 @@ fn print_splash() {
     println!("{}", "Usage".bold());
     println!("  ntkn init --project <NAME>");
     println!(
-        "  ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
+        "  ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM>"
     );
     println!("  ntkn usage");
     println!("  ntkn status");
