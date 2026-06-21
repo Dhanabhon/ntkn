@@ -162,7 +162,7 @@ ntkn
 | `ntkn` | Print splash, version, command list, and local data paths |
 | `ntkn -V`, `ntkn --version` | Print version |
 | `ntkn init --project <NAME>` | Create `.ntkn/`, hooks, and rules for the current directory |
-| `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]` | Append one usage row |
+| `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM>` | Append one usage row |
 | `ntkn usage` | Show totals grouped by provider and model |
 | `ntkn status` | Show project setup and hook health |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
@@ -254,21 +254,9 @@ ntkn usage
 | `--model` | yes | — | Model name for this call |
 | `--prompt` | yes | — | Prompt-side token count |
 | `--comp` | yes | — | Completion-side token count |
-| `--duration` | no | `default_duration_ms` from rules | Stored for compatibility; not shown in `usage` yet |
 
 Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`,
 `agy`). For manual entries, omit `--provider` or pass `--provider manual`.
-
-`--duration` uses `default_duration_ms` from `.ntkn/rules/ntkn-rules.md` when
-omitted. `ntkn init` creates this default:
-
-```yaml
-default_duration_ms: 0
-```
-
-Duration reporting is intentionally hidden for now because current hooks do not
-provide reliable elapsed time. The column and flag remain so older databases and
-scripts keep working.
 
 `usage` groups usage by provider and model. It shows prompt tokens, completion
 tokens, and total tokens.
@@ -348,7 +336,6 @@ CREATE TABLE usage (
   model_name TEXT NOT NULL,
   prompt_tokens INTEGER NOT NULL,
   completion_tokens INTEGER NOT NULL,
-  duration_ms INTEGER NOT NULL DEFAULT 0,
   timestamp TEXT NOT NULL
 );
 ```
@@ -358,8 +345,7 @@ CREATE TABLE usage (
 `record` exits with a clear error if `.ntkn/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
-Bundled Claude Code, Codex, Cursor, and Antigravity hooks record token counts
-only. Duration fields are stored for compatibility but not shown in `usage` yet.
+Bundled Claude Code, Codex, Cursor, and Antigravity hooks record token counts.
 
 ### Claude Code
 
