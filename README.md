@@ -12,6 +12,19 @@ accounting local.
 > [!WARNING]
 > This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
 
+## How it works
+
+1. Run `ntkn init --project <NAME>` in a project.
+2. ntkn creates a local SQLite database, rules file, and supported hook scripts.
+3. Your AI tool fires its Stop/stop event after an agent turn.
+4. The hook reads token usage from the tool payload or transcript.
+5. The hook calls `ntkn record` with provider, model, prompt tokens, and
+   completion tokens.
+6. Run `ntkn usage` to view totals grouped by provider and model.
+
+Everything is stored in the project directory. No token usage is sent to a
+remote service.
+
 ## What it stores
 
 `ntkn init` creates this layout:
