@@ -121,6 +121,7 @@ while IFS= read -r row; do
 
   ntkn record \
     --project "$project_id" \
+    --provider "claude-code" \
     --model "$model" \
     --prompt "$prompt" \
     --comp "$completion" \

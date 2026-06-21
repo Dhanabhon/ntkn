@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-21
+
+### Added
+
+- Provider-aware usage tracking with `record --provider`
+- `status` and `history` now show provider so the same model name can be tracked
+  separately across Claude Code, Codex, Cursor, and manual records
+- SQLite migration adds `usage.provider` with `unknown` for older rows
+
 ## [0.4.0] - 2026-06-21
 
 ### Added
@@ -89,6 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.5.0]: https://github.com/dhanabhon/ntkn/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dhanabhon/ntkn/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dhanabhon/ntkn/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/dhanabhon/ntkn/compare/v0.2.0...v0.3.0

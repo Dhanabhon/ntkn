@@ -175,6 +175,7 @@ if [[ -n "$aggregated" && "$aggregated" != "[]" && "$aggregated" != "null" ]]; t
       cd "$project_dir" || exit 0
       ntkn record \
         --project "$project_id" \
+        --provider "codex" \
         --model "$model" \
         --prompt "$prompt" \
         --comp "$completion" \

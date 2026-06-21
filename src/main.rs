@@ -56,6 +56,8 @@ enum Command {
     Record {
         #[arg(long)]
         project: String,
+        #[arg(long, default_value = "manual")]
+        provider: String,
         #[arg(long)]
         model: String,
         #[arg(long)]
@@ -79,6 +81,7 @@ enum Command {
 }
 
 struct ModelSummary {
+    provider: String,
     model: String,
     prompt: i64,
     completion: i64,
@@ -87,6 +90,7 @@ struct ModelSummary {
 
 struct UsageRecord {
     id: i64,
+    provider: String,
     model: String,
     prompt: i64,
     completion: i64,
@@ -108,11 +112,12 @@ fn run() -> AppResult<()> {
         Some(Command::Init { project }) => init(&project),
         Some(Command::Record {
             project,
+            provider,
             model,
             prompt,
             completion,
             duration,
-        }) => record(&project, &model, prompt, completion, duration),
+        }) => record(&project, &provider, &model, prompt, completion, duration),
         Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
         Some(Command::SyncCodex) => sync_codex(),
@@ -138,7 +143,7 @@ fn print_splash() {
     println!("{}", "Usage".bold());
     println!("  ntkn init --project <NAME>");
     println!(
-        "  ntkn record --project <PROJ> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
+        "  ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
     );
     println!("  ntkn status");
     println!("  ntkn sync-codex");
@@ -670,12 +675,14 @@ fn migrate_legacy_layout() -> AppResult<()> {
 
 fn record(
     project: &str,
+    provider: &str,
     model: &str,
     prompt: i64,
     completion: i64,
     duration: Option<i64>,
 ) -> AppResult<()> {
     validate_required(project, "project")?;
+    validate_required(provider, "provider")?;
     validate_required(model, "model")?;
     validate_tokens(prompt, "prompt")?;
     validate_tokens(completion, "comp")?;
@@ -692,9 +699,11 @@ fn record(
     connection
         .execute(
             "INSERT INTO usage
-                (project_id, model_name, prompt_tokens, completion_tokens, duration_ms, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![project, model, prompt, completion, duration, timestamp],
+                (project_id, provider, model_name, prompt_tokens, completion_tokens, duration_ms, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                project, provider, model, prompt, completion, duration, timestamp
+            ],
         )
         .map_err(|error| format!("could not record usage: {error}"))?;
 
@@ -710,21 +719,22 @@ fn status() -> AppResult<()> {
     let connection = open_existing_connection()?;
     let mut statement = connection
         .prepare(
-            "SELECT model_name, SUM(prompt_tokens), SUM(completion_tokens), SUM(duration_ms)
+            "SELECT provider, model_name, SUM(prompt_tokens), SUM(completion_tokens), SUM(duration_ms)
              FROM usage
              WHERE project_id = ?1
-             GROUP BY model_name
-             ORDER BY SUM(prompt_tokens + completion_tokens) DESC, model_name",
+             GROUP BY provider, model_name
+             ORDER BY SUM(prompt_tokens + completion_tokens) DESC, provider, model_name",
         )
         .map_err(|error| format!("could not query status: {error}"))?;
 
     let rows = statement
         .query_map(params![project], |row| {
             Ok(ModelSummary {
-                model: row.get(0)?,
-                prompt: row.get(1)?,
-                completion: row.get(2)?,
-                duration_ms: row.get(3)?,
+                provider: row.get(0)?,
+                model: row.get(1)?,
+                prompt: row.get(2)?,
+                completion: row.get(3)?,
+                duration_ms: row.get(4)?,
             })
         })
         .map_err(|error| format!("could not query status: {error}"))?
@@ -743,6 +753,7 @@ fn status() -> AppResult<()> {
 
     let mut table = base_table();
     table.set_header(vec![
+        "Provider",
         "Model",
         "Prompt",
         "Completion",
@@ -753,6 +764,7 @@ fn status() -> AppResult<()> {
     for row in rows {
         let total = add_tokens(row.prompt, row.completion)?;
         table.add_row(vec![
+            Cell::new(row.provider),
             Cell::new(row.model),
             Cell::new(format_tokens(row.prompt)),
             Cell::new(format_tokens(row.completion)),
@@ -763,6 +775,7 @@ fn status() -> AppResult<()> {
     }
     table.add_row(vec![
         Cell::new("Grand Total").add_attribute(Attribute::Bold),
+        Cell::new("-").add_attribute(Attribute::Bold),
         Cell::new(format_tokens(prompt_total)).add_attribute(Attribute::Bold),
         Cell::new(format_tokens(completion_total)).add_attribute(Attribute::Bold),
         Cell::new(format_tokens(grand_total)).add_attribute(Attribute::Bold),
@@ -781,7 +794,7 @@ fn history(limit: i64) -> AppResult<()> {
     let connection = open_existing_connection()?;
     let mut statement = connection
         .prepare(
-            "SELECT id, model_name, prompt_tokens, completion_tokens, timestamp
+            "SELECT id, provider, model_name, prompt_tokens, completion_tokens, timestamp
              FROM usage
              WHERE project_id = ?1
              ORDER BY id DESC
@@ -793,10 +806,11 @@ fn history(limit: i64) -> AppResult<()> {
         .query_map(params![project, limit], |row| {
             Ok(UsageRecord {
                 id: row.get(0)?,
-                model: row.get(1)?,
-                prompt: row.get(2)?,
-                completion: row.get(3)?,
-                timestamp: row.get(4)?,
+                provider: row.get(1)?,
+                model: row.get(2)?,
+                prompt: row.get(3)?,
+                completion: row.get(4)?,
+                timestamp: row.get(5)?,
             })
         })
         .map_err(|error| format!("could not query history: {error}"))?
@@ -812,6 +826,7 @@ fn history(limit: i64) -> AppResult<()> {
     table.set_header(vec![
         "ID",
         "Timestamp",
+        "Provider",
         "Model",
         "Prompt",
         "Completion",
@@ -822,6 +837,7 @@ fn history(limit: i64) -> AppResult<()> {
         table.add_row(vec![
             Cell::new(row.id),
             Cell::new(row.timestamp),
+            Cell::new(row.provider),
             Cell::new(row.model),
             Cell::new(format_tokens(row.prompt)),
             Cell::new(format_tokens(row.completion)),
@@ -839,6 +855,7 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
             "CREATE TABLE IF NOT EXISTS usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id TEXT NOT NULL,
+                provider TEXT NOT NULL DEFAULT 'unknown',
                 model_name TEXT NOT NULL,
                 prompt_tokens INTEGER NOT NULL,
                 completion_tokens INTEGER NOT NULL,
@@ -849,6 +866,23 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 ON usage (project_id, model_name);",
         )
         .map_err(|error| format!("could not initialize database schema: {error}"))?;
+
+    if !usage_has_column(connection, "provider")? {
+        connection
+            .execute(
+                "ALTER TABLE usage ADD COLUMN provider TEXT NOT NULL DEFAULT 'unknown'",
+                [],
+            )
+            .map_err(|error| format!("could not add provider column: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_project_provider_model
+                ON usage (project_id, provider, model_name)",
+            [],
+        )
+        .map_err(|error| format!("could not create provider index: {error}"))?;
 
     if !usage_has_column(connection, "duration_ms")? {
         connection
@@ -956,6 +990,9 @@ Requirements:
 - Run `ntkn init --project <name>` once in this repo before starting Claude Code
 
 Check totals with `ntkn status`.
+
+Status groups usage by provider and model, so the same model name used through
+different tools stays separate.
 
 ## Codex
 
@@ -1455,6 +1492,7 @@ mod tests {
 
         create_schema(&connection).expect("migrate schema");
 
+        assert!(usage_has_column(&connection, "provider").expect("inspect schema"));
         assert!(usage_has_column(&connection, "duration_ms").expect("inspect schema"));
     }
 }

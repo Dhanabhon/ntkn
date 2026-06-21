@@ -1,10 +1,10 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
-It records prompt tokens, completion tokens, model name, and optional execution
-time in a SQLite database inside the current project.
+It records provider, model name, prompt tokens, completion tokens, and optional
+execution time in a SQLite database inside the current project.
 
 It is designed for hooks. Call `ntkn record` after an API request and keep the
 accounting local.
@@ -51,8 +51,7 @@ enough token data.
 
 Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
 slug in Cursor (multi-provider routing) are separate usage streams. `ntkn status`
-groups by `model_name` only today; check which tool recorded each row via
-`ntkn history` timestamps and your active agent session.
+groups by provider and model so those streams stay separate.
 
 Claude Code reads session transcripts and deduplicates assistant messages.
 Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
@@ -94,8 +93,11 @@ ntkn init --project my-project
 Record a call:
 
 ```sh
-ntkn record --project my-project --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+ntkn record --project my-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
 ```
+
+`--provider` is optional for manual records and defaults to `manual`. Bundled
+hooks set it to `claude-code`, `codex`, or `cursor`.
 
 `--duration` is optional and uses milliseconds. If you omit it, `ntkn` uses
 `default_duration_ms` from `.ntkn/rules/ntkn-rules.md`.
@@ -116,7 +118,7 @@ Show totals for the current project:
 ntkn status
 ```
 
-`status` groups usage by model. It shows prompt tokens, completion tokens, total
+`status` groups usage by provider and model. It shows prompt tokens, completion
 tokens, total time, and average tokens per second. If duration is `0`, speed is
 shown as `-`.
 
@@ -140,7 +142,7 @@ Then move to the project you want to track:
 ```sh
 cd /path/to/other/project
 ntkn init --project other-project
-ntkn record --project other-project --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+ntkn record --project other-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
 ntkn status
 ```
 
@@ -191,6 +193,7 @@ files if you only want to clear history.
 CREATE TABLE usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'unknown',
   model_name TEXT NOT NULL,
   prompt_tokens INTEGER NOT NULL,
   completion_tokens INTEGER NOT NULL,
@@ -436,7 +439,7 @@ hook is already present; otherwise it prints a merge note.
 Manual fallback when Cursor does not send usage fields:
 
 ```sh
-ntkn record --project my-project --model cursor --prompt 1200 --comp 300
+ntkn record --project my-project --provider cursor --model gpt-5 --prompt 1200 --comp 300
 ```
 
 ## Contribute
