@@ -77,6 +77,22 @@ examples, and local data paths:
 ntkn
 ```
 
+### Commands
+
+| Command | Description |
+| --- | --- |
+| `ntkn` | Print splash, version, command list, and local data paths |
+| `ntkn -V`, `ntkn --version` | Print version |
+| `ntkn init --project <NAME>` | Create `.ntkn/`, hooks, and rules for the current directory |
+| `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]` | Append one usage row |
+| `ntkn status` | Show totals grouped by provider and model |
+| `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
+| `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
+| `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
+| `ntkn sync-cursor` | Replay the last captured Cursor stop payload for this project |
+
+### Examples
+
 Print the version:
 
 ```sh
@@ -90,37 +106,17 @@ Initialize a project:
 ntkn init --project my-project
 ```
 
-Record a call:
+Record a call manually:
 
 ```sh
 ntkn record --project my-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
 ```
-
-`--provider` is optional for manual records and defaults to `manual`. Bundled
-hooks set it to `claude-code`, `codex`, or `cursor`.
-
-`--duration` is optional and uses milliseconds. If you omit it, `ntkn` uses
-`default_duration_ms` from `.ntkn/rules/ntkn-rules.md`.
-
-`ntkn init` creates this default:
-
-```yaml
-default_duration_ms: 0
-```
-
-Change it once per project if you want omitted durations to use a fixed value.
-For example, `default_duration_ms: 5400` records `5.4s` for calls that do not
-pass `--duration`.
 
 Show totals for the current project:
 
 ```sh
 ntkn status
 ```
-
-`status` groups usage by provider and model. It shows prompt tokens, completion
-tokens, total time, and average tokens per second. If duration is `0`, speed is
-shown as `-`.
 
 Show recent rows:
 
@@ -133,6 +129,49 @@ Reset usage stats for the current project:
 ```sh
 ntkn reset
 ```
+
+Refresh Codex totals after a session:
+
+```sh
+ntkn sync-codex
+ntkn status
+```
+
+Replay the last Cursor stop capture:
+
+```sh
+ntkn sync-cursor
+ntkn status
+```
+
+### `record` flags
+
+| Flag | Required | Default | Description |
+| --- | --- | --- | --- |
+| `--project` | yes | — | Project id from `.ntkn/rules/ntkn-rules.md` |
+| `--provider` | no | `manual` | Source tool: `manual`, `claude-code`, `codex`, or `cursor` |
+| `--model` | yes | — | Model name for this call |
+| `--prompt` | yes | — | Prompt-side token count |
+| `--comp` | yes | — | Completion-side token count |
+| `--duration` | no | `default_duration_ms` from rules | Duration in milliseconds |
+
+Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`).
+For manual entries, omit `--provider` or pass `--provider manual`.
+
+`--duration` uses `default_duration_ms` from `.ntkn/rules/ntkn-rules.md` when
+omitted. `ntkn init` creates this default:
+
+```yaml
+default_duration_ms: 0
+```
+
+Change it once per project if you want omitted durations to use a fixed value.
+For example, `default_duration_ms: 5400` records `5.4s` for calls that do not
+pass `--duration`.
+
+`status` groups usage by provider and model. It shows prompt tokens, completion
+tokens, total time, and average tokens per second. If duration is `0`, speed is
+shown as `-`.
 
 `reset` asks for confirmation and deletes only usage rows for the current
 `project_id`. It keeps `.ntkn/rules/ntkn-rules.md`, hook files, and the database
