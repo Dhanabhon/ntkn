@@ -7,6 +7,12 @@ time in a SQLite database inside the current project.
 It is designed for hooks. Call `ntkn record` after an API request and keep the
 accounting local.
 
+> **Warning**
+>
+> This project is currently a work in progress and is not ready for general or
+> production use. Features may be incomplete, unstable, or subject to breaking
+> changes.
+
 ## what it stores
 
 `ntkn init` creates this layout:
