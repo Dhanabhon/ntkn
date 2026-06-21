@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, completion tokens, and optional
@@ -37,7 +37,7 @@ accounting local.
 ```
 
 The SQLite database stores one row per call. The rules file stores the
-`project_id` used by `status` and `history`. The hook files let Claude Code,
+`project_id` used by `usage` and `history`. The hook files let Claude Code,
 Codex, and Cursor record usage after each turn when their hook payloads include
 enough token data.
 
@@ -50,7 +50,7 @@ enough token data.
 | Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
 
 Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
-slug in Cursor (multi-provider routing) are separate usage streams. `ntkn status`
+slug in Cursor (multi-provider routing) are separate usage streams. `ntkn usage`
 groups by provider and model so those streams stay separate.
 
 Claude Code reads session transcripts and deduplicates assistant messages.
@@ -85,7 +85,8 @@ ntkn
 | `ntkn -V`, `ntkn --version` | Print version |
 | `ntkn init --project <NAME>` | Create `.ntkn/`, hooks, and rules for the current directory |
 | `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]` | Append one usage row |
-| `ntkn status` | Show totals grouped by provider and model |
+| `ntkn usage` | Show totals grouped by provider and model |
+| `ntkn status` | Alias for `ntkn usage` |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
 | `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
 | `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
@@ -115,7 +116,7 @@ ntkn record --project my-project --provider manual --model gpt-5 --prompt 1200 -
 Show totals for the current project:
 
 ```sh
-ntkn status
+ntkn usage
 ```
 
 Show recent rows:
@@ -134,14 +135,14 @@ Refresh Codex totals after a session:
 
 ```sh
 ntkn sync-codex
-ntkn status
+ntkn usage
 ```
 
 Replay the last Cursor stop capture:
 
 ```sh
 ntkn sync-cursor
-ntkn status
+ntkn usage
 ```
 
 ### `record` flags
@@ -169,7 +170,7 @@ Change it once per project if you want omitted durations to use a fixed value.
 For example, `default_duration_ms: 5400` records `5.4s` for calls that do not
 pass `--duration`.
 
-`status` groups usage by provider and model. It shows prompt tokens, completion
+`usage` groups usage by provider and model. It shows prompt tokens, completion
 tokens, total time, and average tokens per second. If duration is `0`, speed is
 shown as `-`.
 
@@ -192,12 +193,12 @@ Then move to the project you want to track:
 cd /path/to/other/project
 ntkn init --project other-project
 ntkn record --project other-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
-ntkn status
+ntkn usage
 ```
 
 You only need `ntkn init` once per project. After changing `ntkn`, run
 `cargo install --path .` again from this repo, then go back to the other project
-and run `ntkn status` or `ntkn record`. Existing `.agents/ntkn.sqlite` files are
+and run `ntkn usage` or `ntkn record`. Existing `.agents/ntkn.sqlite` files are
 reused.
 
 ## Uninstall
@@ -320,7 +321,7 @@ transcript output counts can be slightly low on some builds; input and cache
 counts are usually reliable.
 
 Re-run `ntkn init` to refresh the hook script after upgrading `ntkn`. Check
-totals with `ntkn status`.
+totals with `ntkn usage`.
 
 ### Codex
 
@@ -333,7 +334,7 @@ Terminal CLI.
 
 ```sh
 ntkn sync-codex
-ntkn status
+ntkn usage
 ```
 
 That pulls usage from the latest Codex session for this project. No hook trust
@@ -454,7 +455,7 @@ not include usage; the stop hook is the source of truth. Each capture is saved t
 
 ```sh
 ntkn sync-cursor
-ntkn status
+ntkn usage
 ```
 
 That replays `.ntkn/cursor-last-payload.json` from the last stop hook capture.

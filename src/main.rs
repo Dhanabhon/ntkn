@@ -67,7 +67,9 @@ enum Command {
         #[arg(long)]
         duration: Option<i64>,
     },
-    /// Show token totals for the current project.
+    /// Show token usage totals for the current project.
+    Usage,
+    /// Alias for usage.
     Status,
     /// Show recent usage events for the current project.
     History {
@@ -120,7 +122,7 @@ fn run() -> AppResult<()> {
             completion,
             duration,
         }) => record(&project, &provider, &model, prompt, completion, duration),
-        Some(Command::Status) => status(),
+        Some(Command::Usage | Command::Status) => usage(),
         Some(Command::History { limit }) => history(limit),
         Some(Command::Reset) => reset_stats(),
         Some(Command::SyncCodex) => sync_codex(),
@@ -148,6 +150,7 @@ fn print_splash() {
     println!(
         "  ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
     );
+    println!("  ntkn usage");
     println!("  ntkn status");
     println!("  ntkn reset");
     println!("  ntkn sync-codex");
@@ -293,7 +296,7 @@ fn sync_codex() -> AppResult<()> {
         "{}",
         format!("synced Codex usage from {}", session.transcript.display()).green()
     );
-    status()
+    usage()
 }
 
 fn sync_cursor() -> AppResult<()> {
@@ -364,7 +367,7 @@ fn sync_cursor() -> AppResult<()> {
     }
 
     println!("{}", "synced Cursor usage from last stop payload".green());
-    status()
+    usage()
 }
 
 struct CursorSessionMatch {
@@ -718,7 +721,7 @@ fn record(
     Ok(())
 }
 
-fn status() -> AppResult<()> {
+fn usage() -> AppResult<()> {
     let project = current_project_id()?;
     let connection = open_existing_connection()?;
     let mut statement = connection
@@ -1027,9 +1030,9 @@ Requirements:
 - `jq` installed
 - Run `ntkn init --project <name>` once in this repo before starting Claude Code
 
-Check totals with `ntkn status`.
+Check totals with `ntkn usage`.
 
-Status groups usage by provider and model, so the same model name used through
+Usage groups by provider and model, so the same model name used through
 different tools stays separate.
 
 ## Codex
@@ -1062,7 +1065,7 @@ Requirements:
 - `ntkn` on your PATH
 - `jq` installed
 
-Check totals with `ntkn status`.
+Check totals with `ntkn usage`.
 
 ## Cursor
 
@@ -1084,7 +1087,7 @@ Requirements:
 - `ntkn` on your PATH
 - `jq` installed
 
-Check totals with `ntkn status`.
+Check totals with `ntkn usage`.
 "#,
         yaml_string(project)
     )

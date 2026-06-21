@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-22
+
+### Added
+
+- `ntkn usage` command as the clearer primary name for usage totals
+
+### Changed
+
+- `ntkn status` remains available as an alias for `ntkn usage`
+
 ## [0.6.0] - 2026-06-21
 
 ### Added
@@ -105,6 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.7.0]: https://github.com/dhanabhon/ntkn/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dhanabhon/ntkn/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dhanabhon/ntkn/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dhanabhon/ntkn/compare/v0.3.1...v0.4.0
