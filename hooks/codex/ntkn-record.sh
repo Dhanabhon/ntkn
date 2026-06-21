@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ntkn Codex hook: record token usage after each turn (Stop event).
 #
-# Reads transcript_path from hook JSON on stdin, finds the latest token_count
-# event in the Codex session JSONL, and records its last_token_usage (per-turn).
+# Reads transcript_path from hook JSON on stdin, finds all token_count events
+# newer than the last recorded timestamp, aggregates by model, and calls
+# `ntkn record`.
 #
 # Requires: ntkn, jq
 # Project setup: run `ntkn init --project <name>` once in the repo root.
@@ -20,7 +21,7 @@ input=$(cat)
 transcript=$(jq -r '.transcript_path // empty' <<<"$input")
 session_id=$(jq -r '.session_id // empty' <<<"$input")
 project_dir=$(jq -r '.cwd // empty' <<<"$input")
-model=$(jq -r '.model // empty' <<<"$input")
+hook_model=$(jq -r '.model // empty' <<<"$input")
 
 if [[ -z "$transcript" || ! -f "$transcript" ]]; then
   finish
@@ -69,40 +70,6 @@ if [[ -z "$project_id" ]]; then
   finish
 fi
 
-latest_event=$(
-  jq -s -c '
-    [.[]
-     | select(.type == "event_msg")
-     | select(.payload.type == "token_count")]
-    | if length == 0 then empty else .[-1] end
-  ' "$transcript" 2>/dev/null || true
-)
-
-if [[ -z "$latest_event" || "$latest_event" == "null" ]]; then
-  finish
-fi
-
-event_ts=$(jq -r '.timestamp // empty' <<<"$latest_event")
-last_usage=$(
-  jq -c '.payload.info.last_token_usage // empty' <<<"$latest_event"
-)
-
-if [[ -z "$event_ts" || -z "$last_usage" || "$last_usage" == "null" ]]; then
-  finish
-fi
-
-if [[ -z "$model" || "$model" == "null" ]]; then
-  model=$(
-    jq -s -r '
-      [.[]
-       | select(.type == "turn_context")
-       | (.payload.model // .payload.turn_context.model // empty)
-       | select(length > 0)]
-      | last // "unknown"
-    ' "$transcript" 2>/dev/null || echo "unknown"
-  )
-fi
-
 mkdir -p "$(dirname "$state")"
 if [[ ! -s "$state" ]]; then
   echo '{"sessions":{}}' >"$state"
@@ -114,37 +81,86 @@ previous_ts=$(
   ' "$state"
 )
 
-if [[ "$event_ts" == "$previous_ts" ]]; then
+snapshot=$(
+  jq -s -c --arg prev_ts "$previous_ts" '
+    {
+      contexts: [.[] | select(.type == "turn_context") | {ts: .timestamp, model: (.payload.model // "unknown")}],
+      events: [.[]
+        | select(.type == "event_msg")
+        | select(.payload.type == "token_count")
+        | select($prev_ts == "" or .timestamp > $prev_ts)]
+    }
+  ' "$transcript" 2>/dev/null || true
+)
+
+if [[ -z "$snapshot" || "$snapshot" == "null" ]]; then
   finish
 fi
 
-prompt=$(
-  jq -r '
-    (.input_tokens // 0) + (.cached_input_tokens // 0)
-    | if . < 0 then 0 else . end
-  ' <<<"$last_usage"
-)
-completion=$(
-  jq -r '
-    (.output_tokens // 0) + (.reasoning_output_tokens // 0)
-    | if . < 0 then 0 else . end
-  ' <<<"$last_usage"
-)
+event_count=$(jq -r '.events | length' <<<"$snapshot")
+if [[ "$event_count" == "0" ]]; then
+  finish
+fi
 
-if [[ "$prompt" != "0" || "$completion" != "0" ]]; then
-  (
-    cd "$project_dir" || exit 0
-    ntkn record \
-      --project "$project_id" \
-      --model "$model" \
-      --prompt "$prompt" \
-      --comp "$completion" \
-      >/dev/null 2>&1 || true
+default_model=$hook_model
+if [[ -z "$default_model" || "$default_model" == "null" ]]; then
+  default_model=$(
+    jq -r '.contexts[-1].model // "unknown"' <<<"$snapshot"
   )
 fi
 
+aggregated=$(
+  jq -c --arg default_model "$default_model" '
+    . as $root
+    | def model_for($ts):
+        ([$root.contexts[] | select(.ts <= $ts)] | last.model) // $default_model;
+    [$root.events[]
+      | . as $event
+      | ($event.payload.info.last_token_usage // {}) as $usage
+      | {
+          model: model_for($event.timestamp),
+          prompt: (($usage.input_tokens // 0) + ($usage.cached_input_tokens // 0)),
+          completion: (($usage.output_tokens // 0) + ($usage.reasoning_output_tokens // 0))
+        }]
+    | group_by(.model)
+    | map({
+        model: .[0].model,
+        prompt: (map(.prompt) | add),
+        completion: (map(.completion) | add)
+      })
+    | map(select((.prompt // 0) > 0 or (.completion // 0) > 0))
+  ' <<<"$snapshot"
+)
+
+latest_ts=$(
+  jq -r '[.events[].timestamp] | max' <<<"$snapshot"
+)
+
+if [[ -n "$aggregated" && "$aggregated" != "[]" && "$aggregated" != "null" ]]; then
+  while IFS= read -r row; do
+    [[ -z "$row" ]] && continue
+    model=$(jq -r '.model' <<<"$row")
+    prompt=$(jq -r '.prompt' <<<"$row")
+    completion=$(jq -r '.completion' <<<"$row")
+
+    if [[ "$prompt" == "0" && "$completion" == "0" ]]; then
+      continue
+    fi
+
+    (
+      cd "$project_dir" || exit 0
+      ntkn record \
+        --project "$project_id" \
+        --model "$model" \
+        --prompt "$prompt" \
+        --comp "$completion" \
+        >/dev/null 2>&1 || true
+    )
+  done < <(jq -c '.[]' <<<"$aggregated")
+fi
+
 tmp="${state}.tmp"
-jq --arg sid "$session_id" --arg ts "$event_ts" '
+jq --arg sid "$session_id" --arg ts "$latest_ts" '
   .sessions[$sid].last_timestamp = $ts
 ' "$state" >"$tmp" && mv "$tmp" "$state"
 

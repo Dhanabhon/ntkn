@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delta calculation to read empty stdin after the hook payload was consumed
 - Codex hook now records per-turn `last_token_usage` and uses the correct
   `reasoning_output_tokens` field name
+- Codex hook now catches up all missed `token_count` events since the last Stop
+  and groups usage by model when the active model changes mid-session
+- README documents that Codex skips untrusted hooks until you approve them in
+  `/hooks`
 
 ## [0.2.0] - 2026-06-21
 

@@ -12,7 +12,7 @@ accounting local.
 > [!WARNING]
 > This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
 
-## what it stores
+## What it stores
 
 `ntkn init` creates this layout:
 
@@ -36,7 +36,7 @@ The SQLite database stores one row per call. The rules file stores the
 `project_id` used by `status` and `history`. The hook files let Claude Code and
 Codex record usage after each turn.
 
-## build
+## Build
 
 ```sh
 cargo build --release
@@ -44,7 +44,7 @@ cargo build --release
 
 The binary is written to `target/release/ntkn`.
 
-## usage
+## Usage
 
 Run `ntkn` without arguments to print the splash screen, current version, usage
 examples, and local data paths:
@@ -84,7 +84,7 @@ Show recent rows:
 ntkn history --limit 20
 ```
 
-## test in another project
+## Test in another project
 
 Install the current local build first:
 
@@ -107,7 +107,7 @@ You only need `ntkn init` once per project. After changing `ntkn`, run
 and run `ntkn status` or `ntkn record`. Existing `.agents/ntkn.sqlite` files are
 reused.
 
-## schema
+## Schema
 
 ```sql
 CREATE TABLE usage (
@@ -121,7 +121,7 @@ CREATE TABLE usage (
 );
 ```
 
-## hook notes
+## Hook notes
 
 `record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
@@ -211,15 +211,18 @@ Layout after init:
 ```
 
 Codex session JSONL files emit `token_count` events with a per-turn
-`last_token_usage` block. The hook records that block after each Stop and
-deduplicates by event timestamp in `.agents/ntkn-codex-state.json`.
+`last_token_usage` block. The hook records all new events since the last Stop
+and deduplicates by timestamp in `.agents/ntkn-codex-state.json`. Usage is
+grouped by model, so model switches within a session are tracked separately.
 
 Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
 - Run `ntkn init --project <name>` once in the project root
-- Trust the hook in Codex with `/hooks` after the first run
+- **Trust the Stop hook in Codex with `/hooks`** — Codex skips untrusted hooks
+  silently, so usage will not be recorded until you approve it. Re-trust after
+  hook script updates.
 
 Hook wiring in `.codex/hooks.json`:
 
@@ -232,8 +235,12 @@ Hook wiring in `.codex/hooks.json`:
           {
             "type": "command",
             "command": "bash",
-            "args": [".agents/hooks/codex/ntkn-record.sh"],
-            "timeout": 30
+            "args": [
+              "-c",
+              "exec \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.agents/hooks/codex/ntkn-record.sh\""
+            ],
+            "timeout": 30,
+            "statusMessage": "Recording token usage"
           }
         ]
       }
@@ -257,7 +264,7 @@ output plus reasoning tokens from the turn's `last_token_usage`.
 Hook templates for Cursor are not bundled yet. You can still call `ntkn record`
 manually or from your own hooks.
 
-## contribute
+## Contribute
 
 Use the normal Rust toolchain:
 
@@ -270,6 +277,6 @@ cargo clippy -- -D warnings
 Keep changes small. If you change database behavior, make old `.agents/ntkn.sqlite`
 files keep working or document the migration path in the pull request.
 
-## license
+## License
 
 MIT. See `LICENSE`.

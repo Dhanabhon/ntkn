@@ -6,8 +6,12 @@
           {
             "type": "command",
             "command": "bash",
-            "args": [".agents/hooks/codex/ntkn-record.sh"],
-            "timeout": 30
+            "args": [
+              "-c",
+              "exec \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.agents/hooks/codex/ntkn-record.sh\""
+            ],
+            "timeout": 30,
+            "statusMessage": "Recording token usage"
           }
         ]
       }

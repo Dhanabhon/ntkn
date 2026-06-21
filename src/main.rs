@@ -456,7 +456,8 @@ Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
-- Trust the hook in Codex with `/hooks` after the first run
+- Trust the hook in Codex with `/hooks` after the first run. Codex skips
+  untrusted hooks silently.
 
 Check totals with `ntkn status`.
 "#,
