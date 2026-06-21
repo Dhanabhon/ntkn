@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-22
+
+### Added
+
+- `ntkn sync-claude` command for replaying the latest Claude Code transcript
+
+### Fixed
+
+- Claude Code hook now stores rules and dedupe state under `.ntkn/` with legacy
+  `.agents/` fallback
+
+### Removed
+
+- `usage` no longer shows `Total Time` or `Avg Speed`; duration storage remains
+  for compatibility until reliable elapsed-time tracking is implemented
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
@@ -115,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.8.0]: https://github.com/dhanabhon/ntkn/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/dhanabhon/ntkn/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/dhanabhon/ntkn/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dhanabhon/ntkn/compare/v0.4.0...v0.5.0

@@ -1,10 +1,10 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.7.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.8.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
-It records provider, model name, prompt tokens, completion tokens, and optional
-execution time in a SQLite database inside the current project.
+It records provider, model name, prompt tokens, and completion tokens in a
+SQLite database inside the current project.
 
 It is designed for hooks. Call `ntkn record` after an API request and keep the
 accounting local.
@@ -43,9 +43,9 @@ enough token data.
 
 ## Supported tools
 
-| Tool | Provider | Hook | Wiring | Automatic recording | Manual fallback |
+| Tool | Provider | Hook event | Wiring | Automatic recording | Manual fallback |
 | --- | --- | --- | --- | --- | --- |
-| Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn record` |
+| Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
 | Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
 | Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
 
@@ -53,10 +53,17 @@ Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the sam
 slug in Cursor (multi-provider routing) are separate usage streams. `ntkn usage`
 groups by provider and model so those streams stay separate.
 
-Claude Code reads session transcripts and deduplicates assistant messages.
+Claude Code reads session transcripts and deduplicates assistant messages; use
+`ntkn sync-claude` to replay the latest transcript if totals look stale.
 Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
 Stop hooks are untrusted or stale. Cursor reads `input_tokens`/`output_tokens`
 from the stop hook payload; use `ntkn sync-cursor` to replay the last capture.
+
+`Stop` / `stop` is the agent lifecycle event that fires after an AI turn
+finishes. ntkn records usage there because responses, transcripts, and token
+events are complete enough to read. The capitalization is tool-specific:
+Claude Code and Codex use `Stop`; Cursor uses `stop`. This does not stop the
+agent; it means "run this hook after the agent stops responding for this turn."
 
 See [Hook notes](#hook-notes) for setup details per tool.
 
@@ -89,6 +96,7 @@ ntkn
 | `ntkn status` | Alias for `ntkn usage` |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
 | `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
+| `ntkn sync-claude` | Pull Claude Code usage from the latest transcript for this project |
 | `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
 | `ntkn sync-cursor` | Replay the last captured Cursor stop payload for this project |
 
@@ -110,7 +118,7 @@ ntkn init --project my-project
 Record a call manually:
 
 ```sh
-ntkn record --project my-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+ntkn record --project my-project --provider manual --model gpt-5 --prompt 1200 --comp 300
 ```
 
 Show totals for the current project:
@@ -129,6 +137,13 @@ Reset usage stats for the current project:
 
 ```sh
 ntkn reset
+```
+
+Refresh Claude Code totals after a session:
+
+```sh
+ntkn sync-claude
+ntkn usage
 ```
 
 Refresh Codex totals after a session:
@@ -154,7 +169,7 @@ ntkn usage
 | `--model` | yes | — | Model name for this call |
 | `--prompt` | yes | — | Prompt-side token count |
 | `--comp` | yes | — | Completion-side token count |
-| `--duration` | no | `default_duration_ms` from rules | Duration in milliseconds |
+| `--duration` | no | `default_duration_ms` from rules | Stored for compatibility; not shown in `usage` yet |
 
 Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`).
 For manual entries, omit `--provider` or pass `--provider manual`.
@@ -166,13 +181,12 @@ omitted. `ntkn init` creates this default:
 default_duration_ms: 0
 ```
 
-Change it once per project if you want omitted durations to use a fixed value.
-For example, `default_duration_ms: 5400` records `5.4s` for calls that do not
-pass `--duration`.
+Duration reporting is intentionally hidden for now because current hooks do not
+provide reliable elapsed time. The column and flag remain so older databases and
+scripts keep working.
 
 `usage` groups usage by provider and model. It shows prompt tokens, completion
-tokens, total time, and average tokens per second. If duration is `0`, speed is
-shown as `-`.
+tokens, and total tokens.
 
 `reset` asks for confirmation and deletes only usage rows for the current
 `project_id`. It keeps `.ntkn/rules/ntkn-rules.md`, hook files, and the database
@@ -192,7 +206,7 @@ Then move to the project you want to track:
 ```sh
 cd /path/to/other/project
 ntkn init --project other-project
-ntkn record --project other-project --provider manual --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+ntkn record --project other-project --provider manual --model gpt-5 --prompt 1200 --comp 300
 ntkn usage
 ```
 
@@ -254,12 +268,11 @@ CREATE TABLE usage (
 
 ## Hook notes
 
-`record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
+`record` exits with a clear error if `.ntkn/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
-Bundled Claude Code, Codex, and Cursor hooks record token counts only.
-`duration_ms` is stored as `0` for hook records unless your own caller passes
-`--duration`.
+Bundled Claude Code, Codex, and Cursor hooks record token counts only. Duration
+fields are stored for compatibility but not shown in `usage` yet.
 
 ### Claude Code
 
@@ -268,9 +281,9 @@ Bundled Claude Code, Codex, and Cursor hooks record token counts only.
 Layout after init:
 
 ```text
-.agents/
+.ntkn/
   ntkn.sqlite
-  ntkn-claude-state.json
+  claude-state.json
   hooks/
     claude-code/
       ntkn-record.sh
@@ -301,7 +314,7 @@ Hook wiring in `.claude/settings.json`:
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PROJECT_DIR}/.agents/hooks/claude-code/ntkn-record.sh"],
+            "args": ["${CLAUDE_PROJECT_DIR}/.ntkn/hooks/claude-code/ntkn-record.sh"],
             "async": true
           }
         ]
@@ -322,6 +335,15 @@ counts are usually reliable.
 
 Re-run `ntkn init` to refresh the hook script after upgrading `ntkn`. Check
 totals with `ntkn usage`.
+
+If totals look stale, run:
+
+```sh
+ntkn sync-claude
+```
+
+That replays the latest Claude Code transcript for this project and preserves
+the same dedupe state as the Stop hook.
 
 ### Codex
 

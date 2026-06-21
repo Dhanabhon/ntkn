@@ -10,6 +10,11 @@
 set -euo pipefail
 
 input=$(cat)
+
+if ! command -v jq >/dev/null 2>&1; then
+  exit 0
+fi
+
 transcript=$(jq -r '.transcript_path // empty' <<<"$input")
 session_id=$(jq -r '.session_id // empty' <<<"$input")
 project_dir=$(jq -r '.cwd // empty' <<<"$input")
@@ -30,18 +35,20 @@ if [[ -z "$session_id" ]]; then
   exit 0
 fi
 
-rules="$project_dir/.agents/rules/ntkn-rules.md"
-state="$project_dir/.agents/ntkn-claude-state.json"
+rules="$project_dir/.ntkn/rules/ntkn-rules.md"
+legacy_rules="$project_dir/.agents/rules/ntkn-rules.md"
+state="$project_dir/.ntkn/claude-state.json"
+legacy_state="$project_dir/.agents/ntkn-claude-state.json"
+
+if [[ ! -f "$rules" && -f "$legacy_rules" ]]; then
+  rules="$legacy_rules"
+fi
 
 if [[ ! -f "$rules" ]]; then
   exit 0
 fi
 
 if ! command -v ntkn >/dev/null 2>&1; then
-  exit 0
-fi
-
-if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -66,6 +73,9 @@ if [[ -z "$project_id" ]]; then
 fi
 
 mkdir -p "$(dirname "$state")"
+if [[ ! -s "$state" && -s "$legacy_state" ]]; then
+  cp "$legacy_state" "$state"
+fi
 if [[ ! -s "$state" ]]; then
   echo '{"sessions":{}}' >"$state"
 fi

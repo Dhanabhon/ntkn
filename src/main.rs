@@ -78,6 +78,8 @@ enum Command {
     },
     /// Reset usage stats for the current project.
     Reset,
+    /// Pull Claude Code token usage from the latest transcript for this project.
+    SyncClaude,
     /// Pull Codex token usage from the latest session JSONL for this project.
     SyncCodex,
     /// Replay the Cursor stop hook against the latest agent transcript for this project.
@@ -89,7 +91,6 @@ struct ModelSummary {
     model: String,
     prompt: i64,
     completion: i64,
-    duration_ms: i64,
 }
 
 struct UsageRecord {
@@ -125,6 +126,7 @@ fn run() -> AppResult<()> {
         Some(Command::Usage | Command::Status) => usage(),
         Some(Command::History { limit }) => history(limit),
         Some(Command::Reset) => reset_stats(),
+        Some(Command::SyncClaude) => sync_claude(),
         Some(Command::SyncCodex) => sync_codex(),
         Some(Command::SyncCursor) => sync_cursor(),
         None => {
@@ -153,6 +155,7 @@ fn print_splash() {
     println!("  ntkn usage");
     println!("  ntkn status");
     println!("  ntkn reset");
+    println!("  ntkn sync-claude");
     println!("  ntkn sync-codex");
     println!("  ntkn sync-cursor");
     println!("  ntkn history --limit <NUM>");
@@ -244,6 +247,75 @@ fn init(project: &str) -> AppResult<()> {
             .yellow()
     );
     Ok(())
+}
+
+fn sync_claude() -> AppResult<()> {
+    let project_dir = project_root()?;
+    let hook_path = claude_hook_script_path()?;
+    if !hook_path.exists() {
+        return Err(format!(
+            "{} not found; run `ntkn init --project <NAME>` first",
+            hook_path.display()
+        ));
+    }
+
+    let connection = open_existing_connection()?;
+    let project_id = read_project_id()?;
+    let count_before = usage_row_count(&connection, &project_id)?;
+    let session = find_latest_claude_transcript(&project_dir)?;
+    let payload = format!(
+        r#"{{"session_id":"{}","transcript_path":{},"cwd":{},"hook_event_name":"Stop"}}"#,
+        session.session_id,
+        json_string(&session.transcript.display().to_string()),
+        json_string(&project_dir.display().to_string())
+    );
+
+    let mut child = ProcessCommand::new("bash")
+        .arg(&hook_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", hook_path.display()))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "could not write hook payload".to_owned())?
+        .write_all(payload.as_bytes())
+        .map_err(|error| format!("could not write hook payload: {error}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {}: {error}", hook_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "claude sync hook failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    let count_after = usage_row_count(&connection, &project_id)?;
+    if count_after == count_before {
+        return Err(
+            "no new Claude Code usage found. Finish a Claude Code turn first, then run \
+             `ntkn sync-claude` again to replay the latest transcript"
+                .to_owned(),
+        );
+    }
+
+    println!(
+        "{}",
+        format!(
+            "synced Claude Code usage from {}",
+            session.transcript.display()
+        )
+        .green()
+    );
+    usage()
 }
 
 fn sync_codex() -> AppResult<()> {
@@ -376,6 +448,74 @@ struct CursorSessionMatch {
     modified: SystemTime,
 }
 
+struct ClaudeTranscriptMatch {
+    session_id: String,
+    transcript: PathBuf,
+    modified: SystemTime,
+}
+
+fn find_latest_claude_transcript(project_dir: &Path) -> AppResult<ClaudeTranscriptMatch> {
+    let transcripts_root = claude_home()?
+        .join("projects")
+        .join(claude_project_slug(project_dir));
+    if !transcripts_root.is_dir() {
+        return Err(format!(
+            "{} does not exist; run Claude Code in this project first",
+            transcripts_root.display()
+        ));
+    }
+
+    let mut best: Option<ClaudeTranscriptMatch> = None;
+    collect_claude_transcripts(&transcripts_root, &mut best)?;
+
+    best.ok_or_else(|| {
+        format!(
+            "no Claude Code transcript found for {}; run Claude Code in this project first",
+            project_dir.display()
+        )
+    })
+}
+
+fn collect_claude_transcripts(
+    dir: &Path,
+    best: &mut Option<ClaudeTranscriptMatch>,
+) -> AppResult<()> {
+    for entry in
+        fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("could not read {} entry: {error}", dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let Some(session_id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+
+        let modified = entry
+            .metadata()
+            .map_err(|error| format!("could not read {} metadata: {error}", path.display()))?
+            .modified()
+            .map_err(|error| format!("could not read {} modified time: {error}", path.display()))?;
+
+        if best
+            .as_ref()
+            .map(|current| modified > current.modified)
+            .unwrap_or(true)
+        {
+            *best = Some(ClaudeTranscriptMatch {
+                session_id: session_id.to_owned(),
+                transcript: path,
+                modified,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 fn find_latest_cursor_transcript(project_dir: &Path) -> AppResult<CursorSessionMatch> {
     let slug = cursor_project_slug(project_dir);
     let transcripts_root = cursor_home()?
@@ -455,6 +595,23 @@ fn cursor_home() -> AppResult<PathBuf> {
     let home =
         env::var("HOME").map_err(|error| format!("could not resolve home directory: {error}"))?;
     Ok(PathBuf::from(home).join(".cursor"))
+}
+
+fn claude_home() -> AppResult<PathBuf> {
+    if let Ok(home) = env::var("CLAUDE_HOME") {
+        return Ok(PathBuf::from(home));
+    }
+
+    let home =
+        env::var("HOME").map_err(|error| format!("could not resolve home directory: {error}"))?;
+    Ok(PathBuf::from(home).join(".claude"))
+}
+
+fn claude_project_slug(project_dir: &Path) -> String {
+    let path = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    path.display().to_string().replace('/', "-")
 }
 
 fn cursor_project_slug(project_dir: &Path) -> String {
@@ -726,7 +883,7 @@ fn usage() -> AppResult<()> {
     let connection = open_existing_connection()?;
     let mut statement = connection
         .prepare(
-            "SELECT provider, model_name, SUM(prompt_tokens), SUM(completion_tokens), SUM(duration_ms)
+            "SELECT provider, model_name, SUM(prompt_tokens), SUM(completion_tokens)
              FROM usage
              WHERE project_id = ?1
              GROUP BY provider, model_name
@@ -741,7 +898,6 @@ fn usage() -> AppResult<()> {
                 model: row.get(1)?,
                 prompt: row.get(2)?,
                 completion: row.get(3)?,
-                duration_ms: row.get(4)?,
             })
         })
         .map_err(|error| format!("could not query status: {error}"))?
@@ -755,19 +911,10 @@ fn usage() -> AppResult<()> {
 
     let prompt_total = sum_tokens(rows.iter().map(|row| row.prompt))?;
     let completion_total = sum_tokens(rows.iter().map(|row| row.completion))?;
-    let duration_total = sum_duration(rows.iter().map(|row| row.duration_ms))?;
     let grand_total = add_tokens(prompt_total, completion_total)?;
 
     let mut table = base_table();
-    table.set_header(vec![
-        "Provider",
-        "Model",
-        "Prompt",
-        "Completion",
-        "Total",
-        "Total Time",
-        "Avg Speed",
-    ]);
+    table.set_header(vec!["Provider", "Model", "Prompt", "Completion", "Total"]);
     for row in rows {
         let total = add_tokens(row.prompt, row.completion)?;
         table.add_row(vec![
@@ -776,8 +923,6 @@ fn usage() -> AppResult<()> {
             Cell::new(format_tokens(row.prompt)),
             Cell::new(format_tokens(row.completion)),
             Cell::new(format_tokens(total)),
-            Cell::new(format_duration(row.duration_ms)),
-            Cell::new(format_speed(total, row.duration_ms)),
         ]);
     }
     table.add_row(vec![
@@ -786,8 +931,6 @@ fn usage() -> AppResult<()> {
         Cell::new(format_tokens(prompt_total)).add_attribute(Attribute::Bold),
         Cell::new(format_tokens(completion_total)).add_attribute(Attribute::Bold),
         Cell::new(format_tokens(grand_total)).add_attribute(Attribute::Bold),
-        Cell::new(format_duration(duration_total)).add_attribute(Attribute::Bold),
-        Cell::new(format_speed(grand_total, duration_total)).add_attribute(Attribute::Bold),
     ]);
 
     println!("{table}");
@@ -1031,6 +1174,12 @@ Requirements:
 - Run `ntkn init --project <name>` once in this repo before starting Claude Code
 
 Check totals with `ntkn usage`.
+
+If totals look stale after Claude Code work, run:
+
+```sh
+ntkn sync-claude
+```
 
 Usage groups by provider and model, so the same model name used through
 different tools stays separate.
@@ -1349,52 +1498,6 @@ fn sum_tokens(mut values: impl Iterator<Item = i64>) -> AppResult<i64> {
     values.try_fold(0_i64, add_tokens)
 }
 
-fn sum_duration(mut values: impl Iterator<Item = i64>) -> AppResult<i64> {
-    values.try_fold(0_i64, |total, value| {
-        total
-            .checked_add(value)
-            .ok_or_else(|| "duration total is too large".to_owned())
-    })
-}
-
-fn format_duration(duration_ms: i64) -> String {
-    if duration_ms <= 0 {
-        return "0s".to_owned();
-    }
-    if duration_ms < 1_000 {
-        return format!("{duration_ms}ms");
-    }
-    if duration_ms < 60_000 {
-        let seconds = duration_ms as f64 / 1_000.0;
-        return if duration_ms % 1_000 == 0 {
-            format!("{}s", duration_ms / 1_000)
-        } else {
-            format!("{seconds:.1}s")
-        };
-    }
-
-    let seconds = duration_ms / 1_000;
-    let minutes = seconds / 60;
-    let seconds = seconds % 60;
-    if minutes < 60 {
-        return format!("{minutes}m {seconds}s");
-    }
-
-    let hours = minutes / 60;
-    let minutes = minutes % 60;
-    format!("{hours}h {minutes}m {seconds}s")
-}
-
-fn format_speed(tokens: i64, duration_ms: i64) -> String {
-    if duration_ms <= 0 {
-        return "-".to_owned();
-    }
-    format!(
-        "{:.0} tok/s",
-        tokens as f64 / (duration_ms as f64 / 1_000.0)
-    )
-}
-
 fn open_existing_connection() -> AppResult<Connection> {
     let db_path = existing_db_path()?;
     let connection = Connection::open(&db_path)
@@ -1496,15 +1599,6 @@ mod tests {
     #[test]
     fn rejects_token_total_overflow() {
         assert!(add_tokens(i64::MAX, 1).is_err());
-    }
-
-    #[test]
-    fn formats_duration_and_speed() {
-        assert_eq!(format_duration(0), "0s");
-        assert_eq!(format_duration(5400), "5.4s");
-        assert_eq!(format_duration(62_000), "1m 2s");
-        assert_eq!(format_speed(1500, 0), "-");
-        assert_eq!(format_speed(1500, 10_000), "150 tok/s");
     }
 
     #[test]
