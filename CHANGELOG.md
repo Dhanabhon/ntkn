@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-21
+
+### Added
+
+- `ntkn reset` command for clearing current-project usage rows after explicit
+  `RESET` confirmation
+
 ## [0.5.0] - 2026-06-21
 
 ### Added
@@ -98,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.6.0]: https://github.com/dhanabhon/ntkn/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/dhanabhon/ntkn/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/dhanabhon/ntkn/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/dhanabhon/ntkn/compare/v0.3.0...v0.3.1

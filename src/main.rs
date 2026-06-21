@@ -74,6 +74,8 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         limit: i64,
     },
+    /// Reset usage stats for the current project.
+    Reset,
     /// Pull Codex token usage from the latest session JSONL for this project.
     SyncCodex,
     /// Replay the Cursor stop hook against the latest agent transcript for this project.
@@ -120,6 +122,7 @@ fn run() -> AppResult<()> {
         }) => record(&project, &provider, &model, prompt, completion, duration),
         Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
+        Some(Command::Reset) => reset_stats(),
         Some(Command::SyncCodex) => sync_codex(),
         Some(Command::SyncCursor) => sync_cursor(),
         None => {
@@ -146,6 +149,7 @@ fn print_splash() {
         "  ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
     );
     println!("  ntkn status");
+    println!("  ntkn reset");
     println!("  ntkn sync-codex");
     println!("  ntkn sync-cursor");
     println!("  ntkn history --limit <NUM>");
@@ -846,6 +850,40 @@ fn history(limit: i64) -> AppResult<()> {
     }
 
     println!("{table}");
+    Ok(())
+}
+
+fn reset_stats() -> AppResult<()> {
+    let project = current_project_id()?;
+    let connection = open_existing_connection()?;
+    let count = usage_row_count(&connection, &project)?;
+    if count == 0 {
+        println!("{}", "no usage recorded yet".dimmed());
+        return Ok(());
+    }
+
+    print!(
+        "{} ",
+        format!("reset {count} usage rows for project `{project}`? type RESET to confirm:")
+            .yellow()
+    );
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("could not write confirmation prompt: {error}"))?;
+
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("could not read confirmation: {error}"))?;
+    if answer.trim() != "RESET" {
+        println!("{}", "reset cancelled".dimmed());
+        return Ok(());
+    }
+
+    let deleted = connection
+        .execute("DELETE FROM usage WHERE project_id = ?1", params![project])
+        .map_err(|error| format!("could not reset usage stats: {error}"))?;
+    println!("{}", format!("reset {deleted} usage rows").green());
     Ok(())
 }
 

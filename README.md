@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.5.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, completion tokens, and optional
@@ -127,6 +127,16 @@ Show recent rows:
 ```sh
 ntkn history --limit 20
 ```
+
+Reset usage stats for the current project:
+
+```sh
+ntkn reset
+```
+
+`reset` asks for confirmation and deletes only usage rows for the current
+`project_id`. It keeps `.ntkn/rules/ntkn-rules.md`, hook files, and the database
+schema.
 
 ## Test in another project
 
