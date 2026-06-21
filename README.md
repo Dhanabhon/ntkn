@@ -53,6 +53,13 @@ examples, and local data paths:
 ntkn
 ```
 
+Print the version:
+
+```sh
+ntkn -V
+ntkn --version
+```
+
 Initialize a project:
 
 ```sh

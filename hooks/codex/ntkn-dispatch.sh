@@ -13,7 +13,20 @@ finish() {
 }
 
 input=$(cat)
-project_dir=$(jq -r '.cwd // empty' <<<"$input")
+
+if ! command -v jq >/dev/null 2>&1; then
+  finish
+fi
+
+transcript=$(jq -r '.transcript_path // .transcriptPath // empty' <<<"$input")
+project_dir=$(jq -r '.cwd // .working_dir // .workingDirectory // empty' <<<"$input")
+
+if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
+  project_dir=$(
+    jq -r 'select(.type == "session_meta" or .type == "turn_context") | .payload.cwd // empty' "$transcript" 2>/dev/null \
+      | awk 'NF { print; exit }' || true
+  )
+fi
 
 if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
   finish

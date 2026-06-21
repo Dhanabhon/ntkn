@@ -136,6 +136,7 @@ fn print_splash() {
     println!("  ntkn status");
     println!("  ntkn sync-codex");
     println!("  ntkn history --limit <NUM>");
+    println!("  ntkn -V, --version");
     println!();
     println!("{}", "Data".bold());
     println!("  .ntkn/ntkn.sqlite");
@@ -354,8 +355,7 @@ fn read_codex_session_id(path: &Path, cwd: &str) -> AppResult<Option<String>> {
         return Ok(None);
     }
 
-    let cwd_marker = format!(r#""cwd":"{cwd}""#);
-    if !line.contains(&cwd_marker) {
+    if extract_json_string_field(&line, "cwd")?.as_deref() != Some(cwd) {
         return Ok(None);
     }
 

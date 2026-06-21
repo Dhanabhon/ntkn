@@ -18,13 +18,32 @@ finish() {
 }
 
 input=$(cat)
-transcript=$(jq -r '.transcript_path // empty' <<<"$input")
-session_id=$(jq -r '.session_id // empty' <<<"$input")
-project_dir=$(jq -r '.cwd // empty' <<<"$input")
+
+if ! command -v jq >/dev/null 2>&1; then
+  finish
+fi
+
+transcript=$(jq -r '.transcript_path // .transcriptPath // empty' <<<"$input")
+session_id=$(jq -r '.session_id // .sessionId // empty' <<<"$input")
+project_dir=$(jq -r '.cwd // .working_dir // .workingDirectory // empty' <<<"$input")
 hook_model=$(jq -r '.model // empty' <<<"$input")
 
 if [[ -z "$transcript" || ! -f "$transcript" ]]; then
   finish
+fi
+
+if [[ -z "$session_id" ]]; then
+  session_id=$(
+    jq -r 'select(.type == "session_meta") | .payload.id // empty' "$transcript" 2>/dev/null \
+      | awk 'NF { print; exit }' || true
+  )
+fi
+
+if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
+  project_dir=$(
+    jq -r 'select(.type == "session_meta" or .type == "turn_context") | .payload.cwd // empty' "$transcript" 2>/dev/null \
+      | awk 'NF { print; exit }' || true
+  )
 fi
 
 if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
@@ -49,10 +68,6 @@ if [[ ! -f "$rules" ]]; then
 fi
 
 if ! command -v ntkn >/dev/null 2>&1; then
-  finish
-fi
-
-if ! command -v jq >/dev/null 2>&1; then
   finish
 fi
 
