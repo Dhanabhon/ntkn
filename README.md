@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.10.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.11.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, and completion tokens in a
@@ -98,23 +98,29 @@ remote service.
   hooks.json
   hooks/
     ntkn-record.sh
+.opencode/
+  plugins/
+    ntkn.js
 .codex/
   hooks.json
 ```
 
 The SQLite database stores one row per call. The rules file stores the
 `project_id` used by `usage` and `history`. The hook files let Claude Code,
-Codex, Cursor, and Antigravity record usage after each turn when their hook
-payloads include enough token data.
+Codex, Cursor, Antigravity, and OpenCode record usage after each turn when their
+hook payloads or plugin events include enough token data.
 
 ## Supported tools
 
-| Tool | Provider | Hook event | Wiring | Automatic recording | Manual fallback |
-| --- | --- | --- | --- | --- | --- |
-| Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
-| Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
-| Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
-| Antigravity | Google / Multi-provider | stop | `.agy/hooks.json` → `.agy/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-agy` |
+| Icon | Tool | Provider | Hook event | Wiring | Automatic recording | Manual fallback |
+| --- | --- | --- | --- | --- | --- | --- |
+| <img src="https://thesvg.org/icons/claude/default.svg" alt="Claude" width="20" height="20"> | Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
+| <img src="https://thesvg.org/icons/codex/default.svg" alt="Codex" width="20" height="20"> | Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
+| <img src="https://thesvg.org/icons/cursor/default.svg" alt="Cursor" width="20" height="20"> | Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
+| <img src="https://thesvg.org/icons/google/default.svg" alt="Google" width="20" height="20"> | Antigravity | Google / Multi-provider | stop | `.agy/hooks.json` → `.agy/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-agy` |
+| <img src="https://thesvg.org/icons/opencode/default.svg" alt="OpenCode" width="20" height="20"> | OpenCode | Multi-provider | session.idle | `.opencode/plugins/ntkn.js` → `.ntkn/hooks/opencode/ntkn-record.sh` | Yes, when plugin event includes usage metadata | `ntkn sync-opencode` |
+
+Tool icons are loaded from [theSVG](https://thesvg.org/).
 
 Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
 slug in Cursor or Antigravity (multi-provider routing) are separate usage
@@ -127,14 +133,16 @@ Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
 Stop hooks are untrusted or stale. Cursor reads `input_tokens`/`output_tokens`
 from the stop hook payload; use `ntkn sync-cursor` to replay the last capture.
 Antigravity uses the same stop-payload pattern with provider `agy`; use
-`ntkn sync-agy` to replay the last capture.
+`ntkn sync-agy` to replay the last capture. OpenCode uses a local project plugin
+with provider `opencode`; use `ntkn sync-opencode` to replay the last captured
+session event.
 
 `Stop` / `stop` is the agent lifecycle event that fires after an AI turn
 finishes. ntkn records usage there because responses, transcripts, and token
 events are complete enough to read. The capitalization is tool-specific:
-Claude Code and Codex use `Stop`; Cursor and Antigravity use `stop`. This does
-not stop the agent; it means "run this hook after the agent stops responding for
-this turn."
+Claude Code and Codex use `Stop`; Cursor and Antigravity use `stop`; OpenCode
+uses the plugin `session.idle` event. These do not stop the agent; they mean
+"run this hook after the agent stops responding for this turn."
 
 See [Hook notes](#hook-notes) for setup details per tool.
 
@@ -172,6 +180,7 @@ ntkn
 | `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
 | `ntkn sync-cursor` | Replay the last captured Cursor stop payload for this project |
 | `ntkn sync-agy` | Replay the last captured Antigravity stop payload for this project |
+| `ntkn sync-opencode` | Replay the last captured OpenCode plugin event for this project |
 
 ### Examples
 
@@ -252,21 +261,37 @@ ntkn sync-agy
 ntkn usage
 ```
 
+Replay the last OpenCode plugin event:
+
+```sh
+ntkn sync-opencode
+ntkn usage
+```
+
 ### `record` flags
 
 | Flag | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--project` | yes | — | Project id from `.ntkn/rules/ntkn-rules.md` |
-| `--provider` | no | `manual` | Source tool: `manual`, `claude-code`, `codex`, `cursor`, or `agy` |
+| `--provider` | no | `manual` | Source tool: `manual`, `claude-code`, `codex`, `cursor`, `agy`, or `opencode` |
 | `--model` | yes | — | Model name for this call |
 | `--prompt` | yes | — | Prompt-side token count |
 | `--comp` | yes | — | Completion-side token count |
 
 Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`,
-`agy`). For manual entries, omit `--provider` or pass `--provider manual`.
+`agy`, `opencode`). For manual entries, omit `--provider` or pass
+`--provider manual`.
 
 `usage` groups usage by provider and model. It shows prompt tokens, completion
 tokens, and total tokens.
+
+`stats` shows a green activity heatmap for the last year plus all-time, last
+7 days, last 30 days, favorite model, and total token summary. It uses local
+SQLite timestamps only.
+
+`sync-opencode` replays `.ntkn/opencode-last-event.json`, which is written by
+the OpenCode project plugin when OpenCode emits `session.idle`. Use it after an
+OpenCode session if `ntkn usage` looks stale.
 
 `reset` asks for confirmation and deletes only usage rows for the current
 `project_id`. It keeps `.ntkn/rules/ntkn-rules.md`, hook files, and the database
@@ -311,11 +336,12 @@ If a project is using Codex hooks, also remove:
 rm -f .codex/hooks.json
 ```
 
-If a project is using Cursor or Antigravity hooks, also remove:
+If a project is using Cursor, Antigravity, or OpenCode hooks, also remove:
 
 ```sh
 rm -rf .cursor
 rm -rf .agy
+rm -rf .opencode
 ```
 
 If you installed ntkn globally and want to remove the binary:
@@ -353,7 +379,8 @@ CREATE TABLE usage (
 `record` exits with a clear error if `.ntkn/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
-Bundled Claude Code, Codex, Cursor, and Antigravity hooks record token counts.
+Bundled Claude Code, Codex, Cursor, Antigravity, and OpenCode hooks record token
+counts.
 
 ### Claude Code
 
@@ -647,6 +674,47 @@ Manual fallback when Antigravity does not send usage fields:
 
 ```sh
 ntkn record --project my-project --provider agy --model gemini-3 --prompt 1200 --comp 300
+```
+
+### OpenCode
+
+`ntkn init` installs an OpenCode project plugin.
+
+Layout after init:
+
+```text
+.opencode/
+  plugins/
+    ntkn.js
+.ntkn/
+  hooks/
+    opencode/
+      ntkn-record.sh
+  opencode-state.json
+```
+
+OpenCode loads project plugins from `.opencode/plugins/` at startup. The bundled
+plugin listens for `session.idle`, saves the last event to
+`.ntkn/opencode-last-event.json`, and records usage when that event includes
+token metadata.
+
+**Recommended if totals look stale:**
+
+```sh
+ntkn sync-opencode
+ntkn usage
+```
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Restart OpenCode after running `ntkn init --project <name>`
+
+Manual fallback when OpenCode does not send usage fields:
+
+```sh
+ntkn record --project my-project --provider opencode --model gpt-5 --prompt 1200 --comp 300
 ```
 
 ## Contribute

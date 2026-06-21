@@ -37,6 +37,10 @@ const AGY_HOOK_SCRIPT: &str = "hooks/ntkn-record.sh";
 const AGY_HOOKS_FILE: &str = "hooks.json";
 const AGY_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/agy/ntkn-record.sh");
 const AGY_HOOKS_CONTENT: &str = include_str!("../hooks/agy/hooks.json");
+const OPENCODE_HOOK_SCRIPT: &str = "hooks/opencode/ntkn-record.sh";
+const OPENCODE_PLUGIN_FILE: &str = "plugins/ntkn.js";
+const OPENCODE_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/opencode/ntkn-record.sh");
+const OPENCODE_PLUGIN_CONTENT: &str = include_str!("../hooks/opencode/plugin.js");
 
 #[derive(Parser)]
 #[command(
@@ -93,6 +97,8 @@ enum Command {
     SyncCursor,
     /// Replay the latest Antigravity stop hook capture for this project.
     SyncAgy,
+    /// Replay the latest OpenCode session idle event for this project.
+    SyncOpencode,
 }
 
 struct ModelSummary {
@@ -148,6 +154,7 @@ fn run() -> AppResult<()> {
         Some(Command::SyncCodex) => sync_codex(),
         Some(Command::SyncCursor) => sync_cursor(),
         Some(Command::SyncAgy) => sync_agy(),
+        Some(Command::SyncOpencode) => sync_opencode(),
         None => {
             print_splash();
             Ok(())
@@ -179,6 +186,7 @@ fn print_splash() {
     println!("  ntkn sync-codex");
     println!("  ntkn sync-cursor");
     println!("  ntkn sync-agy");
+    println!("  ntkn sync-opencode");
     println!("  ntkn history --limit <NUM>");
     println!("  ntkn -V, --version");
     println!();
@@ -188,11 +196,13 @@ fn print_splash() {
     println!("  .ntkn/hooks/codex/ntkn-record.sh");
     println!("  .cursor/hooks/ntkn-record.sh");
     println!("  .agy/hooks/ntkn-record.sh");
+    println!("  .ntkn/hooks/opencode/ntkn-record.sh");
     println!("  ~/.codex/hooks/ntkn-dispatch.sh");
     println!("  ~/.codex/hooks.json");
     println!("  .claude/settings.json");
     println!("  .cursor/hooks.json");
     println!("  .agy/hooks.json");
+    println!("  .opencode/plugins/ntkn.js");
 }
 
 fn init(project: &str) -> AppResult<()> {
@@ -223,6 +233,8 @@ fn init(project: &str) -> AppResult<()> {
     let cursor_hooks_path = install_cursor_hooks_config()?;
     let agy_hook_path = install_agy_hooks()?;
     let agy_hooks_path = install_agy_hooks_config()?;
+    let opencode_hook_path = install_opencode_hook()?;
+    let opencode_plugin_path = install_opencode_plugin()?;
     warn_about_project_codex_hooks()?;
 
     println!(
@@ -265,6 +277,14 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
+        format!("opencode hook: {}", opencode_hook_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("opencode plugin: {}", opencode_plugin_path.display()).dimmed()
+    );
+    println!(
+        "{}",
         "Codex Desktop has no /hooks command. Run `ntkn sync-codex` after Codex work.".yellow()
     );
     println!(
@@ -277,6 +297,12 @@ fn init(project: &str) -> AppResult<()> {
         "{}",
         "Antigravity records usage from stop-hook input_tokens/output_tokens. Run \
          `ntkn sync-agy` if totals look stale."
+            .yellow()
+    );
+    println!(
+        "{}",
+        "OpenCode records usage from its session.idle plugin event when usage metadata is present. \
+         Run `ntkn sync-opencode` if totals look stale."
             .yellow()
     );
     println!(
@@ -546,6 +572,71 @@ fn sync_agy() -> AppResult<()> {
         "{}",
         "synced Antigravity usage from last stop payload".green()
     );
+    usage()
+}
+
+fn sync_opencode() -> AppResult<()> {
+    let hook_path = opencode_hook_script_path()?;
+    if !hook_path.exists() {
+        return Err(format!(
+            "{} not found; run `ntkn init --project <NAME>` first",
+            hook_path.display()
+        ));
+    }
+
+    let connection = open_existing_connection()?;
+    let project_id = read_project_id()?;
+    let count_before = usage_row_count(&connection, &project_id)?;
+
+    let payload_path = data_dir()?.join("opencode-last-event.json");
+    if !payload_path.is_file() {
+        return Err(format!(
+            "{} does not exist. Finish an OpenCode session first so the plugin captures usage",
+            payload_path.display()
+        ));
+    }
+    let payload = fs::read_to_string(&payload_path)
+        .map_err(|error| format!("could not read {}: {error}", payload_path.display()))?;
+
+    let mut child = ProcessCommand::new("bash")
+        .arg(&hook_path)
+        .env("NTKN_FORCE_SYNC", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", hook_path.display()))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "could not write OpenCode payload".to_owned())?
+        .write_all(payload.as_bytes())
+        .map_err(|error| format!("could not write OpenCode payload: {error}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {}: {error}", hook_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "opencode sync hook failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    let count_after = usage_row_count(&connection, &project_id)?;
+    if count_after == count_before {
+        return Err(
+            "no new OpenCode usage found. Finish an OpenCode session first so the plugin \
+             captures usage metadata; then run `ntkn sync-opencode` again"
+                .to_owned(),
+        );
+    }
+
+    println!("{}", "synced OpenCode usage from last plugin event".green());
     usage()
 }
 
@@ -1076,6 +1167,8 @@ fn status() -> AppResult<()> {
     let cursor_hooks = cursor_hooks_dir()?.join(CURSOR_HOOKS_FILE);
     let agy_hook = agy_hook_script_path()?;
     let agy_hooks = agy_hooks_dir()?.join(AGY_HOOKS_FILE);
+    let opencode_hook = opencode_hook_script_path()?;
+    let opencode_plugin = opencode_plugin_path()?;
 
     let mut table = base_table();
     table.set_header(vec!["Check", "Status", "Value"]);
@@ -1145,6 +1238,16 @@ fn status() -> AppResult<()> {
         "Antigravity hooks",
         agy_hooks.exists(),
         agy_hooks.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "OpenCode hook",
+        opencode_hook.exists(),
+        opencode_hook.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "OpenCode plugin",
+        opencode_plugin.exists(),
+        opencode_plugin.display().to_string(),
     ));
 
     println!("{table}");
@@ -1723,6 +1826,28 @@ Requirements:
 - `jq` installed
 
 Check totals with `ntkn usage`.
+
+## OpenCode
+
+`ntkn init` installs an OpenCode project plugin at `.opencode/plugins/ntkn.js`
+and a recorder at `.ntkn/hooks/opencode/ntkn-record.sh`. The plugin listens for
+`session.idle` events and records usage when OpenCode includes token metadata.
+
+If totals look stale after OpenCode work, run:
+
+```sh
+ntkn sync-opencode
+```
+
+That replays the last captured plugin event from `.ntkn/opencode-last-event.json`.
+Restart OpenCode after running `ntkn init` so the plugin is loaded.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+
+Check totals with `ntkn usage`.
 "#,
         yaml_string(project)
     )
@@ -1974,6 +2099,47 @@ fn agy_hooks_dir() -> AppResult<PathBuf> {
     Ok(env::current_dir()
         .map_err(|error| format!("could not read current directory: {error}"))?
         .join(".agy"))
+}
+
+fn install_opencode_hook() -> AppResult<PathBuf> {
+    let hook_path = opencode_hook_script_path()?;
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&hook_path, OPENCODE_HOOK_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hook_path.display()))?;
+    make_executable(&hook_path)?;
+
+    Ok(hook_path)
+}
+
+fn install_opencode_plugin() -> AppResult<PathBuf> {
+    let plugin_path = opencode_plugin_path()?;
+    if let Some(parent) = plugin_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&plugin_path, OPENCODE_PLUGIN_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", plugin_path.display()))?;
+
+    Ok(plugin_path)
+}
+
+fn opencode_hook_script_path() -> AppResult<PathBuf> {
+    Ok(data_dir()?.join(OPENCODE_HOOK_SCRIPT))
+}
+
+fn opencode_plugin_path() -> AppResult<PathBuf> {
+    Ok(opencode_dir()?.join(OPENCODE_PLUGIN_FILE))
+}
+
+fn opencode_dir() -> AppResult<PathBuf> {
+    Ok(env::current_dir()
+        .map_err(|error| format!("could not read current directory: {error}"))?
+        .join(".opencode"))
 }
 
 fn make_executable(path: &Path) -> AppResult<()> {
