@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-21
+
+### Added
+
+- Cursor project hook support installed by `ntkn init`
+  - `.cursor/hooks.json` wires the Cursor `stop` hook
+  - `.cursor/hooks/ntkn-record.sh` records usage when Cursor provides token
+    fields in the hook payload
+- README documents Cursor setup, manual fallback recording, uninstall cleanup,
+  version flags, and Codex hook trust behavior
+
 ### Fixed
 
 - Codex Stop hook no longer skips recording: a missing `jq -n` flag caused the
@@ -57,5 +68,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.3.0]: https://github.com/dhanabhon/ntkn/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/dhanabhon/ntkn/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/dhanabhon/ntkn/releases/tag/v0.1.0

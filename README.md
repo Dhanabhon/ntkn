@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records prompt tokens, completion tokens, model name, and optional execution
@@ -17,7 +17,7 @@ accounting local.
 `ntkn init` creates this layout:
 
 ```text
-.agents/
+.ntkn/
   ntkn.sqlite
   hooks/
     claude-code/
@@ -28,13 +28,18 @@ accounting local.
     ntkn-rules.md
 .claude/
   settings.json
+.cursor/
+  hooks.json
+  hooks/
+    ntkn-record.sh
 .codex/
   hooks.json
 ```
 
 The SQLite database stores one row per call. The rules file stores the
 `project_id` used by `status` and `history`. The hook files let Claude Code and
-Codex record usage after each turn.
+Codex record usage after each turn. Cursor hooks are installed too, but Cursor
+must provide token fields in the hook payload for automatic recording.
 
 ## Build
 
@@ -129,6 +134,12 @@ If a project is using Codex hooks, also remove:
 rm -f .codex/hooks.json
 ```
 
+If a project is using Cursor hooks, also remove:
+
+```sh
+rm -rf .cursor
+```
+
 If you installed ntkn globally and want to remove the binary:
 
 ```sh
@@ -163,8 +174,9 @@ CREATE TABLE usage (
 `record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
-Bundled Claude Code and Codex hooks record token counts only. `duration_ms` is
-stored as `0` for hook records unless your own caller passes `--duration`.
+Bundled Claude Code, Codex, and Cursor hooks record token counts only.
+`duration_ms` is stored as `0` for hook records unless your own caller passes
+`--duration`.
 
 ### Claude Code
 
@@ -244,6 +256,14 @@ ntkn status
 
 That pulls usage from the latest Codex session for this project. No hook trust
 required.
+
+RTK does not need Codex hook approval because agents run it explicitly as a
+command prefix, such as `rtk git status`. ntkn automatic recording is different:
+Codex runs `~/.codex/hooks/ntkn-dispatch.sh` in the background after a turn, so
+Codex requires trust before executing that hook.
+
+In short: `rtk` is an explicit command the agent chooses to run; ntkn
+auto-recording is background executable code triggered by Codex.
 
 `ntkn init` also installs:
 
@@ -330,8 +350,37 @@ output plus reasoning tokens from the turn's `last_token_usage`.
 
 ### Cursor
 
-Hook templates for Cursor are not bundled yet. You can still call `ntkn record`
-manually or from your own hooks.
+`ntkn init` installs a Cursor project `stop` hook.
+
+Layout after init:
+
+```text
+.cursor/
+  hooks.json
+  hooks/
+    ntkn-record.sh
+```
+
+Cursor project hooks run from the project root. The bundled hook reads the hook
+payload, looks for real token fields, and calls `ntkn record` when they exist.
+Supported fields include `prompt_tokens`, `completion_tokens`, `input_tokens`,
+`output_tokens`, and camelCase variants under `usage`, `token_usage`, or
+`tokenUsage`.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Run `ntkn init --project <name>` once in the project root
+
+Cursor local transcripts currently do not consistently include token totals. If
+Cursor does not send token fields to the hook, the hook exits cleanly and records
+nothing. In that case, call `ntkn record` manually or from your own Cursor
+automation after the request:
+
+```sh
+ntkn record --project my-project --model cursor --prompt 1200 --comp 300
+```
 
 ## Contribute
 

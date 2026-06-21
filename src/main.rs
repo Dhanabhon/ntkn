@@ -5,10 +5,10 @@ use comfy_table::{Attribute, Cell, ContentArrangement, Table, presets::UTF8_FULL
 use rusqlite::{Connection, params};
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::io::{BufRead, BufReader, Write};
 use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 use std::time::SystemTime;
 
@@ -28,6 +28,10 @@ const CODEX_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/codex/ntkn-record
 const CODEX_DISPATCH_SCRIPT_CONTENT: &str = include_str!("../hooks/codex/ntkn-dispatch.sh");
 const CODEX_GLOBAL_HOOKS_TEMPLATE: &str = include_str!("../hooks/codex/global-hooks.json");
 const CODEX_DISPATCH_ARG: &str = "__NTKN_DISPATCH__";
+const CURSOR_HOOK_SCRIPT: &str = "hooks/ntkn-record.sh";
+const CURSOR_HOOKS_FILE: &str = "hooks.json";
+const CURSOR_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/cursor/ntkn-record.sh");
+const CURSOR_HOOKS_CONTENT: &str = include_str!("../hooks/cursor/hooks.json");
 
 #[derive(Parser)]
 #[command(
@@ -142,9 +146,11 @@ fn print_splash() {
     println!("  .ntkn/ntkn.sqlite");
     println!("  .ntkn/rules/ntkn-rules.md");
     println!("  .ntkn/hooks/codex/ntkn-record.sh");
+    println!("  .cursor/hooks/ntkn-record.sh");
     println!("  ~/.codex/hooks/ntkn-dispatch.sh");
     println!("  ~/.codex/hooks.json");
     println!("  .claude/settings.json");
+    println!("  .cursor/hooks.json");
 }
 
 fn init(project: &str) -> AppResult<()> {
@@ -171,6 +177,8 @@ fn init(project: &str) -> AppResult<()> {
     let claude_settings_path = install_claude_code_settings()?;
     let codex_hook_path = install_codex_hooks()?;
     let codex_dispatch_path = install_global_codex_hook()?;
+    let cursor_hook_path = install_cursor_hooks()?;
+    let cursor_hooks_path = install_cursor_hooks_config()?;
     warn_about_project_codex_hooks()?;
 
     println!(
@@ -197,8 +205,15 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
-        "Codex Desktop has no /hooks command. Run `ntkn sync-codex` after Codex work."
-            .yellow()
+        format!("cursor hook: {}", cursor_hook_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("cursor hooks: {}", cursor_hooks_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        "Codex Desktop has no /hooks command. Run `ntkn sync-codex` after Codex work.".yellow()
     );
     println!(
         "{}",
@@ -257,11 +272,7 @@ fn sync_codex() -> AppResult<()> {
 
     println!(
         "{}",
-        format!(
-            "synced Codex usage from {}",
-            session.transcript.display()
-        )
-        .green()
+        format!("synced Codex usage from {}", session.transcript.display()).green()
     );
     status()
 }
@@ -301,8 +312,8 @@ fn collect_codex_sessions(
     cwd: &str,
     best: &mut Option<CodexSessionMatch>,
 ) -> AppResult<()> {
-    for entry in fs::read_dir(dir)
-        .map_err(|error| format!("could not read {}: {error}", dir.display()))?
+    for entry in
+        fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?
     {
         let entry =
             entry.map_err(|error| format!("could not read {} entry: {error}", dir.display()))?;
@@ -417,12 +428,8 @@ fn migrate_legacy_layout() -> AppResult<()> {
     let root = project_root()?;
     let legacy_dir = root.join(AGENTS_DIR);
     let data_dir = root.join(DATA_DIR);
-    fs::create_dir_all(&data_dir).map_err(|error| {
-        format!(
-            "could not create {}: {error}",
-            data_dir.display()
-        )
-    })?;
+    fs::create_dir_all(&data_dir)
+        .map_err(|error| format!("could not create {}: {error}", data_dir.display()))?;
 
     let legacy_db = legacy_dir.join(DB_FILE);
     let data_db = data_dir.join(DB_FILE);
@@ -440,9 +447,8 @@ fn migrate_legacy_layout() -> AppResult<()> {
     let data_rules = data_dir.join("rules").join(RULES_FILE);
     if legacy_rules.exists() && !data_rules.exists() {
         if let Some(parent) = data_rules.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("could not create {}: {error}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
         }
         fs::copy(&legacy_rules, &data_rules).map_err(|error| {
             format!(
@@ -747,6 +753,25 @@ Requirements:
 - `jq` installed
 
 Check totals with `ntkn status`.
+
+## Cursor
+
+`ntkn init` installs a Cursor `stop` hook at `.cursor/hooks.json` and
+`.cursor/hooks/ntkn-record.sh`. Cursor does not consistently expose token usage
+in local hook payloads, so the hook records only when real token fields are
+present. Otherwise it exits cleanly and does not block Cursor.
+
+Supported fields include `prompt_tokens`, `completion_tokens`, `input_tokens`,
+`output_tokens`, and camelCase variants under `usage`, `token_usage`, or
+`tokenUsage`.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+
+If Cursor does not provide token counts, call `ntkn record` manually from your
+own wrapper or automation.
 "#,
         yaml_string(project)
     )
@@ -813,12 +838,8 @@ fn install_global_codex_hook() -> AppResult<PathBuf> {
         .map_err(|error| format!("could not create {}: {error}", hooks_dir.display()))?;
 
     let dispatch_path = hooks_dir.join("ntkn-dispatch.sh");
-    fs::write(&dispatch_path, CODEX_DISPATCH_SCRIPT_CONTENT).map_err(|error| {
-        format!(
-            "could not write {}: {error}",
-            dispatch_path.display()
-        )
-    })?;
+    fs::write(&dispatch_path, CODEX_DISPATCH_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", dispatch_path.display()))?;
     make_executable(&dispatch_path)?;
 
     let hooks_path = codex_home.join(CODEX_HOOKS_FILE);
@@ -826,19 +847,11 @@ fn install_global_codex_hook() -> AppResult<PathBuf> {
     let hooks_content = CODEX_GLOBAL_HOOKS_TEMPLATE.replace(CODEX_DISPATCH_ARG, &dispatch_arg);
 
     if hooks_path.exists() {
-        let existing = fs::read_to_string(&hooks_path).map_err(|error| {
-            format!(
-                "could not read {}: {error}",
-                hooks_path.display()
-            )
-        })?;
+        let existing = fs::read_to_string(&hooks_path)
+            .map_err(|error| format!("could not read {}: {error}", hooks_path.display()))?;
         if existing.contains("ntkn-dispatch.sh") {
-            fs::write(&hooks_path, hooks_content).map_err(|error| {
-                format!(
-                    "could not refresh {}: {error}",
-                    hooks_path.display()
-                )
-            })?;
+            fs::write(&hooks_path, hooks_content)
+                .map_err(|error| format!("could not refresh {}: {error}", hooks_path.display()))?;
             println!(
                 "{}",
                 "refreshed ~/.codex/hooks.json; if you use the Codex CLI, approve \
@@ -859,12 +872,8 @@ fn install_global_codex_hook() -> AppResult<PathBuf> {
         return Ok(dispatch_path);
     }
 
-    fs::write(&hooks_path, hooks_content).map_err(|error| {
-        format!(
-            "could not write {}: {error}",
-            hooks_path.display()
-        )
-    })?;
+    fs::write(&hooks_path, hooks_content)
+        .map_err(|error| format!("could not write {}: {error}", hooks_path.display()))?;
 
     Ok(dispatch_path)
 }
@@ -891,8 +900,8 @@ fn codex_home() -> AppResult<PathBuf> {
         return Ok(PathBuf::from(home));
     }
 
-    let home = env::var("HOME")
-        .map_err(|error| format!("could not resolve home directory: {error}"))?;
+    let home =
+        env::var("HOME").map_err(|error| format!("could not resolve home directory: {error}"))?;
     Ok(PathBuf::from(home).join(".codex"))
 }
 
@@ -904,6 +913,61 @@ fn codex_hooks_dir() -> AppResult<PathBuf> {
     Ok(env::current_dir()
         .map_err(|error| format!("could not read current directory: {error}"))?
         .join(".codex"))
+}
+
+fn install_cursor_hooks() -> AppResult<PathBuf> {
+    let hook_path = cursor_hook_script_path()?;
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&hook_path, CURSOR_HOOK_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hook_path.display()))?;
+    make_executable(&hook_path)?;
+
+    Ok(hook_path)
+}
+
+fn install_cursor_hooks_config() -> AppResult<PathBuf> {
+    let hooks_dir = cursor_hooks_dir()?;
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|error| format!("could not create {}: {error}", hooks_dir.display()))?;
+
+    let hooks_path = hooks_dir.join(CURSOR_HOOKS_FILE);
+    if hooks_path.exists() {
+        let existing = fs::read_to_string(&hooks_path)
+            .map_err(|error| format!("could not read {}: {error}", hooks_path.display()))?;
+        if existing.contains("ntkn-record.sh") {
+            fs::write(&hooks_path, CURSOR_HOOKS_CONTENT)
+                .map_err(|error| format!("could not refresh {}: {error}", hooks_path.display()))?;
+        } else {
+            println!(
+                "{}",
+                format!(
+                    "note: {} already exists; merge the stop hook from hooks/cursor/hooks.json",
+                    hooks_path.display()
+                )
+                .yellow()
+            );
+        }
+        return Ok(hooks_path);
+    }
+
+    fs::write(&hooks_path, CURSOR_HOOKS_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hooks_path.display()))?;
+
+    Ok(hooks_path)
+}
+
+fn cursor_hook_script_path() -> AppResult<PathBuf> {
+    Ok(cursor_hooks_dir()?.join(CURSOR_HOOK_SCRIPT))
+}
+
+fn cursor_hooks_dir() -> AppResult<PathBuf> {
+    Ok(env::current_dir()
+        .map_err(|error| format!("could not read current directory: {error}"))?
+        .join(".cursor"))
 }
 
 fn make_executable(path: &Path) -> AppResult<()> {
