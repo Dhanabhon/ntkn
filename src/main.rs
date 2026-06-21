@@ -5,7 +5,9 @@ use comfy_table::{Attribute, Cell, ContentArrangement, Table, presets::UTF8_FULL
 use rusqlite::{Connection, params};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 type AppResult<T> = Result<T, String>;
@@ -13,12 +15,25 @@ type AppResult<T> = Result<T, String>;
 const AGENTS_DIR: &str = ".agents";
 const DB_FILE: &str = "ntkn.sqlite";
 const RULES_FILE: &str = "ntkn-rules.md";
+const CLAUDE_HOOK_SCRIPT: &str = "hooks/claude-code/ntkn-record.sh";
+const CLAUDE_SETTINGS_FILE: &str = "settings.json";
+const CLAUDE_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/claude-code/ntkn-record.sh");
+const CLAUDE_SETTINGS_CONTENT: &str = include_str!("../hooks/claude-code/settings.json");
+const CODEX_HOOK_SCRIPT: &str = "hooks/codex/ntkn-record.sh";
+const CODEX_HOOKS_FILE: &str = "hooks.json";
+const CODEX_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/codex/ntkn-record.sh");
+const CODEX_HOOKS_CONTENT: &str = include_str!("../hooks/codex/hooks.json");
 
 #[derive(Parser)]
-#[command(name = "ntkn", version, about = "Local token tracker for AI agents")]
+#[command(
+    name = "ntkn",
+    version,
+    about = "NTKN: Local Token Tracker for AI Agents",
+    arg_required_else_help = false
+)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -77,17 +92,49 @@ fn main() -> ExitCode {
 
 fn run() -> AppResult<()> {
     match Cli::parse().command {
-        Command::Init { project } => init(&project),
-        Command::Record {
+        Some(Command::Init { project }) => init(&project),
+        Some(Command::Record {
             project,
             model,
             prompt,
             completion,
             duration,
-        } => record(&project, &model, prompt, completion, duration),
-        Command::Status => status(),
-        Command::History { limit } => history(limit),
+        }) => record(&project, &model, prompt, completion, duration),
+        Some(Command::Status) => status(),
+        Some(Command::History { limit }) => history(limit),
+        None => {
+            print_splash();
+            Ok(())
+        }
     }
+}
+
+fn print_splash() {
+    println!("{}", "ntkn (นับโทเค็น)".cyan().bold());
+    println!(
+        "{}",
+        format!(
+            "NTKN: Local Token Tracker for AI Agents v{}",
+            env!("CARGO_PKG_VERSION")
+        )
+        .dimmed()
+    );
+    println!();
+    println!("{}", "Usage".bold());
+    println!("  ntkn init --project <NAME>");
+    println!(
+        "  ntkn record --project <PROJ> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
+    );
+    println!("  ntkn status");
+    println!("  ntkn history --limit <NUM>");
+    println!();
+    println!("{}", "Data".bold());
+    println!("  .agents/ntkn.sqlite");
+    println!("  .agents/rules/ntkn-rules.md");
+    println!("  .agents/hooks/claude-code/ntkn-record.sh");
+    println!("  .agents/hooks/codex/ntkn-record.sh");
+    println!("  .claude/settings.json");
+    println!("  .codex/hooks.json");
 }
 
 fn init(project: &str) -> AppResult<()> {
@@ -108,12 +155,33 @@ fn init(project: &str) -> AppResult<()> {
             .map_err(|error| format!("could not write {}: {error}", rules_path.display()))?;
     }
 
+    let claude_hook_path = install_claude_code_hooks()?;
+    let claude_settings_path = install_claude_code_settings()?;
+    let codex_hook_path = install_codex_hooks()?;
+    let codex_hooks_path = install_codex_hooks_config()?;
+
     println!(
         "{}",
         format!("initialized ntkn for project `{project}`").green()
     );
     println!("{}", format!("database: {}", db_path.display()).dimmed());
     println!("{}", format!("rules: {}", rules_path.display()).dimmed());
+    println!(
+        "{}",
+        format!("claude hook: {}", claude_hook_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("claude settings: {}", claude_settings_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("codex hook: {}", codex_hook_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("codex hooks: {}", codex_hooks_path.display()).dimmed()
+    );
     Ok(())
 }
 
@@ -362,10 +430,137 @@ budget_limit: 100000
 
 - Keep prompts specific and remove stale context.
 - Prefer repo-local evidence over repeated explanation.
-- Record prompt and completion tokens after each agent run.
+
+## Claude Code
+
+`ntkn init` installs a Stop hook at `.agents/hooks/claude-code/ntkn-record.sh`
+and wires it from `.claude/settings.json`. After each turn, the hook reads the
+session transcript and appends new usage rows to `.agents/ntkn.sqlite`.
+
+Requirements:
+
+- `ntkn` on your PATH (`cargo install --path .` from the ntkn repo)
+- `jq` installed
+- Run `ntkn init --project <name>` once in this repo before starting Claude Code
+
+Check totals with `ntkn status`.
+
+## Codex
+
+`ntkn init` installs a Stop hook at `.agents/hooks/codex/ntkn-record.sh`
+and wires it from `.codex/hooks.json`. After each turn, the hook diffs
+cumulative `token_count` events in the Codex session JSONL and appends new
+usage rows to `.agents/ntkn.sqlite`.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Trust the hook in Codex with `/hooks` after the first run
+
+Check totals with `ntkn status`.
 "#,
         yaml_string(project)
     )
+}
+
+fn install_claude_code_hooks() -> AppResult<PathBuf> {
+    let hook_path = claude_hook_script_path()?;
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&hook_path, CLAUDE_HOOK_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hook_path.display()))?;
+    make_executable(&hook_path)?;
+
+    Ok(hook_path)
+}
+
+fn install_claude_code_settings() -> AppResult<PathBuf> {
+    let settings_dir = claude_settings_dir()?;
+    fs::create_dir_all(&settings_dir)
+        .map_err(|error| format!("could not create {}: {error}", settings_dir.display()))?;
+
+    let settings_path = settings_dir.join(CLAUDE_SETTINGS_FILE);
+    if settings_path.exists() {
+        return Ok(settings_path);
+    }
+
+    fs::write(&settings_path, CLAUDE_SETTINGS_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", settings_path.display()))?;
+
+    Ok(settings_path)
+}
+
+fn claude_hook_script_path() -> AppResult<PathBuf> {
+    Ok(agents_dir()?.join(CLAUDE_HOOK_SCRIPT))
+}
+
+fn claude_settings_dir() -> AppResult<PathBuf> {
+    Ok(env::current_dir()
+        .map_err(|error| format!("could not read current directory: {error}"))?
+        .join(".claude"))
+}
+
+fn install_codex_hooks() -> AppResult<PathBuf> {
+    let hook_path = codex_hook_script_path()?;
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&hook_path, CODEX_HOOK_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hook_path.display()))?;
+    make_executable(&hook_path)?;
+
+    Ok(hook_path)
+}
+
+fn install_codex_hooks_config() -> AppResult<PathBuf> {
+    let hooks_dir = codex_hooks_dir()?;
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|error| format!("could not create {}: {error}", hooks_dir.display()))?;
+
+    let hooks_path = hooks_dir.join(CODEX_HOOKS_FILE);
+    if hooks_path.exists() {
+        return Ok(hooks_path);
+    }
+
+    fs::write(&hooks_path, CODEX_HOOKS_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hooks_path.display()))?;
+
+    Ok(hooks_path)
+}
+
+fn codex_hook_script_path() -> AppResult<PathBuf> {
+    Ok(agents_dir()?.join(CODEX_HOOK_SCRIPT))
+}
+
+fn codex_hooks_dir() -> AppResult<PathBuf> {
+    Ok(env::current_dir()
+        .map_err(|error| format!("could not read current directory: {error}"))?
+        .join(".codex"))
+}
+
+fn make_executable(path: &Path) -> AppResult<()> {
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(path)
+            .map_err(|error| format!("could not read {} permissions: {error}", path.display()))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .map_err(|error| format!("could not mark {} executable: {error}", path.display()))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+
+    Ok(())
 }
 
 fn yaml_string(value: &str) -> String {

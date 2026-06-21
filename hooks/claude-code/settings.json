@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PROJECT_DIR}/.agents/hooks/claude-code/ntkn-record.sh"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

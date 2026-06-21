@@ -104,6 +104,134 @@ CREATE TABLE usage (
 `record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
+### Claude Code
+
+`ntkn init` installs a Claude Code Stop hook that records usage after each turn.
+
+Layout after init:
+
+```text
+.agents/
+  ntkn.sqlite
+  ntkn-claude-state.json
+  hooks/
+    claude-code/
+      ntkn-record.sh
+  rules/
+    ntkn-rules.md
+.claude/
+  settings.json
+```
+
+The hook reads Claude Code's session transcript (`transcript_path` from the
+Stop hook payload), deduplicates assistant messages by `uuid`, and calls
+`ntkn record` for any new usage in that turn.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Run `ntkn init --project <name>` once in the project root
+
+Hook wiring in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PROJECT_DIR}/.agents/hooks/claude-code/ntkn-record.sh"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If `.claude/settings.json` already exists, `ntkn init` leaves it unchanged.
+Merge the Stop hook block above manually, or copy from
+`hooks/claude-code/settings.json` in this repo.
+
+Prompt-side token counts include uncached input plus cache read and cache
+creation tokens. Completion-side counts use `output_tokens`. Claude Code
+transcript output counts can be slightly low on some builds; input and cache
+counts are usually reliable.
+
+Re-run `ntkn init` to refresh the hook script after upgrading `ntkn`. Check
+totals with `ntkn status`.
+
+### Codex
+
+`ntkn init` installs a Codex Stop hook that records usage after each turn.
+
+Layout after init:
+
+```text
+.agents/
+  ntkn.sqlite
+  ntkn-codex-state.json
+  hooks/
+    codex/
+      ntkn-record.sh
+  rules/
+    ntkn-rules.md
+.codex/
+  hooks.json
+```
+
+Codex session JSONL files emit cumulative `token_count` events. The hook
+stores the last cumulative totals per session in `.agents/ntkn-codex-state.json`
+and records only the delta for each turn.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Run `ntkn init --project <name>` once in the project root
+- Trust the hook in Codex with `/hooks` after the first run
+
+Hook wiring in `.codex/hooks.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [".agents/hooks/codex/ntkn-record.sh"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex Stop hooks must print JSON on stdout. The bundled script always exits
+with `{"continue":true}` so it never blocks the agent.
+
+If `.codex/hooks.json` already exists, `ntkn init` leaves it unchanged. Merge
+the Stop hook block above manually, or copy from `hooks/codex/hooks.json` in
+this repo.
+
+Prompt-side counts use input plus cached input tokens. Completion counts use
+output plus reasoning tokens from the cumulative delta.
+
+### Cursor
+
+Hook templates for Cursor are not bundled yet. You can still call `ntkn record`
+manually or from your own hooks.
+
 ## contribute
 
 Use the normal Rust toolchain:

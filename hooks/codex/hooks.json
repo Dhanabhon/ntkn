@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [".agents/hooks/codex/ntkn-record.sh"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
