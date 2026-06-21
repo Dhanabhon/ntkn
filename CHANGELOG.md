@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Codex Stop hook no longer skips recording: a missing `jq -n` flag caused the
+  delta calculation to read empty stdin after the hook payload was consumed
+- Codex hook now records per-turn `last_token_usage` and uses the correct
+  `reasoning_output_tokens` field name
+
 ## [0.2.0] - 2026-06-21
 
 ### Added

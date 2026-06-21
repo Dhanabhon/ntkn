@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ntkn Codex hook: record token usage after each turn (Stop event).
 #
-# Reads transcript_path from hook JSON on stdin, diffs cumulative token_count
-# events in the Codex session JSONL, and calls `ntkn record`.
+# Reads transcript_path from hook JSON on stdin, finds the latest token_count
+# event in the Codex session JSONL, and records its last_token_usage (per-turn).
 #
 # Requires: ntkn, jq
 # Project setup: run `ntkn init --project <name>` once in the repo root.
@@ -69,23 +69,25 @@ if [[ -z "$project_id" ]]; then
   finish
 fi
 
-latest=$(
+latest_event=$(
   jq -s -c '
     [.[]
      | select(.type == "event_msg")
-     | select(.payload.type == "token_count")
-     | .payload.info.total_token_usage
-     | {
-         input: (.input_tokens // 0),
-         cached: (.cached_input_tokens // 0),
-         output: (.output_tokens // 0),
-         reasoning: (.reasoning_tokens // 0)
-       }]
+     | select(.payload.type == "token_count")]
     | if length == 0 then empty else .[-1] end
   ' "$transcript" 2>/dev/null || true
 )
 
-if [[ -z "$latest" || "$latest" == "null" ]]; then
+if [[ -z "$latest_event" || "$latest_event" == "null" ]]; then
+  finish
+fi
+
+event_ts=$(jq -r '.timestamp // empty' <<<"$latest_event")
+last_usage=$(
+  jq -c '.payload.info.last_token_usage // empty' <<<"$latest_event"
+)
+
+if [[ -z "$event_ts" || -z "$last_usage" || "$last_usage" == "null" ]]; then
   finish
 fi
 
@@ -106,34 +108,27 @@ if [[ ! -s "$state" ]]; then
   echo '{"sessions":{}}' >"$state"
 fi
 
-previous=$(
-  jq -c --arg sid "$session_id" '
-    .sessions[$sid] // {input: 0, cached: 0, output: 0, reasoning: 0}
+previous_ts=$(
+  jq -r --arg sid "$session_id" '
+    .sessions[$sid].last_timestamp // empty
   ' "$state"
 )
 
-delta=$(
-  jq -c --argjson latest "$latest" --argjson previous "$previous" '
-    {
-      input: (($latest.input // 0) - ($previous.input // 0)),
-      cached: (($latest.cached // 0) - ($previous.cached // 0)),
-      output: (($latest.output // 0) - ($previous.output // 0)),
-      reasoning: (($latest.reasoning // 0) - ($previous.reasoning // 0))
-    }
-  '
-)
+if [[ "$event_ts" == "$previous_ts" ]]; then
+  finish
+fi
 
 prompt=$(
   jq -r '
-    (.input + .cached)
+    (.input_tokens // 0) + (.cached_input_tokens // 0)
     | if . < 0 then 0 else . end
-  ' <<<"$delta"
+  ' <<<"$last_usage"
 )
 completion=$(
   jq -r '
-    (.output + .reasoning)
+    (.output_tokens // 0) + (.reasoning_output_tokens // 0)
     | if . < 0 then 0 else . end
-  ' <<<"$delta"
+  ' <<<"$last_usage"
 )
 
 if [[ "$prompt" != "0" || "$completion" != "0" ]]; then
@@ -149,8 +144,8 @@ if [[ "$prompt" != "0" || "$completion" != "0" ]]; then
 fi
 
 tmp="${state}.tmp"
-jq --arg sid "$session_id" --argjson latest "$latest" '
-  .sessions[$sid] = $latest
+jq --arg sid "$session_id" --arg ts "$event_ts" '
+  .sessions[$sid].last_timestamp = $ts
 ' "$state" >"$tmp" && mv "$tmp" "$state"
 
 finish

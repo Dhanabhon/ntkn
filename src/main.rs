@@ -448,9 +448,9 @@ Check totals with `ntkn status`.
 ## Codex
 
 `ntkn init` installs a Stop hook at `.agents/hooks/codex/ntkn-record.sh`
-and wires it from `.codex/hooks.json`. After each turn, the hook diffs
-cumulative `token_count` events in the Codex session JSONL and appends new
-usage rows to `.agents/ntkn.sqlite`.
+and wires it from `.codex/hooks.json`. After each turn, the hook reads the
+latest `last_token_usage` from Codex session JSONL and appends new usage rows
+to `.agents/ntkn.sqlite`.
 
 Requirements:
 

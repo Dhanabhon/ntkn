@@ -19,12 +19,22 @@ accounting local.
 ```text
 .agents/
   ntkn.sqlite
+  hooks/
+    claude-code/
+      ntkn-record.sh
+    codex/
+      ntkn-record.sh
   rules/
     ntkn-rules.md
+.claude/
+  settings.json
+.codex/
+  hooks.json
 ```
 
 The SQLite database stores one row per call. The rules file stores the
-`project_id` used by `status` and `history`.
+`project_id` used by `status` and `history`. The hook files let Claude Code and
+Codex record usage after each turn.
 
 ## build
 
@@ -35,6 +45,13 @@ cargo build --release
 The binary is written to `target/release/ntkn`.
 
 ## usage
+
+Run `ntkn` without arguments to print the splash screen, current version, usage
+examples, and local data paths:
+
+```sh
+ntkn
+```
 
 Initialize a project:
 
@@ -108,6 +125,9 @@ CREATE TABLE usage (
 
 `record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
+
+Bundled Claude Code and Codex hooks record token counts only. `duration_ms` is
+stored as `0` for hook records unless your own caller passes `--duration`.
 
 ### Claude Code
 
@@ -190,9 +210,9 @@ Layout after init:
   hooks.json
 ```
 
-Codex session JSONL files emit cumulative `token_count` events. The hook
-stores the last cumulative totals per session in `.agents/ntkn-codex-state.json`
-and records only the delta for each turn.
+Codex session JSONL files emit `token_count` events with a per-turn
+`last_token_usage` block. The hook records that block after each Stop and
+deduplicates by event timestamp in `.agents/ntkn-codex-state.json`.
 
 Requirements:
 
@@ -230,7 +250,7 @@ the Stop hook block above manually, or copy from `hooks/codex/hooks.json` in
 this repo.
 
 Prompt-side counts use input plus cached input tokens. Completion counts use
-output plus reasoning tokens from the cumulative delta.
+output plus reasoning tokens from the turn's `last_token_usage`.
 
 ### Cursor
 
