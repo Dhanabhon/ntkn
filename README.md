@@ -1,5 +1,7 @@
 # ntkn (นับโทเค็น)
 
+[![version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records prompt tokens, completion tokens, model name, and optional execution
 time in a SQLite database inside the current project.
@@ -7,11 +9,8 @@ time in a SQLite database inside the current project.
 It is designed for hooks. Call `ntkn record` after an API request and keep the
 accounting local.
 
-> **Warning**
->
-> This project is currently a work in progress and is not ready for general or
-> production use. Features may be incomplete, unstable, or subject to breaking
-> changes.
+> [!WARNING]
+> This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
 
 ## what it stores
 
