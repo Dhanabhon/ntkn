@@ -37,9 +37,24 @@ accounting local.
 ```
 
 The SQLite database stores one row per call. The rules file stores the
-`project_id` used by `status` and `history`. The hook files let Claude Code and
-Codex record usage after each turn. Cursor hooks are installed too, but Cursor
-must provide token fields in the hook payload for automatic recording.
+`project_id` used by `status` and `history`. The hook files let Claude Code,
+Codex, and Cursor record usage after each turn when their hook payloads include
+enough token data.
+
+## Supported tools
+
+| Tool | Hook | Wiring | Automatic recording | Manual fallback |
+| --- | --- | --- | --- | --- |
+| Claude Code | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn record` |
+| Codex | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
+| Cursor | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | When the hook payload includes token fields | `ntkn record` |
+
+Claude Code reads session transcripts and deduplicates assistant messages.
+Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
+Stop hooks are untrusted or stale. Cursor local transcripts often omit token
+totals, so manual `ntkn record` is common there.
+
+See [Hook notes](#hook-notes) for setup details per tool.
 
 ## Build
 
