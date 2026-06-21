@@ -74,6 +74,8 @@ enum Command {
     },
     /// Pull Codex token usage from the latest session JSONL for this project.
     SyncCodex,
+    /// Replay the Cursor stop hook against the latest agent transcript for this project.
+    SyncCursor,
 }
 
 struct ModelSummary {
@@ -114,6 +116,7 @@ fn run() -> AppResult<()> {
         Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
         Some(Command::SyncCodex) => sync_codex(),
+        Some(Command::SyncCursor) => sync_cursor(),
         None => {
             print_splash();
             Ok(())
@@ -139,6 +142,7 @@ fn print_splash() {
     );
     println!("  ntkn status");
     println!("  ntkn sync-codex");
+    println!("  ntkn sync-cursor");
     println!("  ntkn history --limit <NUM>");
     println!("  ntkn -V, --version");
     println!();
@@ -217,6 +221,12 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
+        "Cursor records usage from stop-hook input_tokens/output_tokens. Run \
+         `ntkn sync-cursor` if totals look stale."
+            .yellow()
+    );
+    println!(
+        "{}",
         "Optional auto-recording: run `codex` in Terminal once and approve the startup \
          \"Hooks need review\" prompt (CLI only)."
             .yellow()
@@ -275,6 +285,202 @@ fn sync_codex() -> AppResult<()> {
         format!("synced Codex usage from {}", session.transcript.display()).green()
     );
     status()
+}
+
+fn sync_cursor() -> AppResult<()> {
+    let project_dir = project_root()?;
+    let hook_path = cursor_hook_script_path()?;
+    if !hook_path.exists() {
+        return Err(format!(
+            "{} not found; run `ntkn init --project <NAME>` first",
+            hook_path.display()
+        ));
+    }
+
+    let connection = open_existing_connection()?;
+    let project_id = read_project_id()?;
+    let count_before = usage_row_count(&connection, &project_id)?;
+
+    let payload_path = data_dir()?.join("cursor-last-payload.json");
+    let payload = if payload_path.is_file() {
+        fs::read_to_string(&payload_path)
+            .map_err(|error| format!("could not read {}: {error}", payload_path.display()))?
+    } else {
+        let session = find_latest_cursor_transcript(&project_dir)?;
+        format!(
+            r#"{{"session_id":"{}","transcript_path":{},"cwd":{},"hook_event_name":"stop"}}"#,
+            session.session_id,
+            json_string(&session.transcript.display().to_string()),
+            json_string(&project_dir.display().to_string())
+        )
+    };
+
+    let mut child = ProcessCommand::new("bash")
+        .arg(&hook_path)
+        .env("NTKN_FORCE_SYNC", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", hook_path.display()))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "could not write hook payload".to_owned())?
+        .write_all(payload.as_bytes())
+        .map_err(|error| format!("could not write hook payload: {error}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {}: {error}", hook_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cursor sync hook failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    let count_after = usage_row_count(&connection, &project_id)?;
+    if count_after == count_before {
+        return Err(
+            "no new Cursor usage found. Finish a Cursor agent turn first so the stop hook \
+             captures input_tokens/output_tokens; then run `ntkn sync-cursor` again to replay \
+             the last captured stop payload"
+                .to_owned(),
+        );
+    }
+
+    println!("{}", "synced Cursor usage from last stop payload".green());
+    status()
+}
+
+struct CursorSessionMatch {
+    session_id: String,
+    transcript: PathBuf,
+    modified: SystemTime,
+}
+
+fn find_latest_cursor_transcript(project_dir: &Path) -> AppResult<CursorSessionMatch> {
+    let slug = cursor_project_slug(project_dir);
+    let transcripts_root = cursor_home()?
+        .join("projects")
+        .join(slug)
+        .join("agent-transcripts");
+    if !transcripts_root.is_dir() {
+        return Err(format!(
+            "{} does not exist; run Cursor in this project first",
+            transcripts_root.display()
+        ));
+    }
+
+    let mut best: Option<CursorSessionMatch> = None;
+    collect_cursor_transcripts(&transcripts_root, &mut best)?;
+
+    best.ok_or_else(|| {
+        format!(
+            "no Cursor transcript found for {}; run Cursor in this project first",
+            project_dir.display()
+        )
+    })
+}
+
+fn collect_cursor_transcripts(dir: &Path, best: &mut Option<CursorSessionMatch>) -> AppResult<()> {
+    for entry in
+        fs::read_dir(dir).map_err(|error| format!("could not read {}: {error}", dir.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("could not read {} entry: {error}", dir.display()))?;
+        let session_dir = entry.path();
+        if !session_dir.is_dir() {
+            continue;
+        }
+
+        let Some(session_id) = session_dir.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+
+        let transcript = session_dir.join(format!("{session_id}.jsonl"));
+        if !transcript.is_file() {
+            continue;
+        }
+
+        let modified = entry
+            .metadata()
+            .map_err(|error| format!("could not read {} metadata: {error}", session_dir.display()))?
+            .modified()
+            .map_err(|error| {
+                format!(
+                    "could not read {} modified time: {error}",
+                    session_dir.display()
+                )
+            })?;
+
+        if best
+            .as_ref()
+            .map(|current| modified > current.modified)
+            .unwrap_or(true)
+        {
+            *best = Some(CursorSessionMatch {
+                session_id: session_id.to_owned(),
+                transcript,
+                modified,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn cursor_home() -> AppResult<PathBuf> {
+    if let Ok(home) = env::var("CURSOR_HOME") {
+        return Ok(PathBuf::from(home));
+    }
+
+    let home =
+        env::var("HOME").map_err(|error| format!("could not resolve home directory: {error}"))?;
+    Ok(PathBuf::from(home).join(".cursor"))
+}
+
+fn cursor_project_slug(project_dir: &Path) -> String {
+    let path = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    path.display()
+        .to_string()
+        .trim_start_matches('/')
+        .replace('/', "-")
+}
+
+fn read_project_id() -> AppResult<String> {
+    let path = rules_path()?;
+    let content = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "could not read {}; run `ntkn init --project <NAME>` first: {error}",
+            path.display()
+        )
+    })?;
+
+    for line in content.lines() {
+        if let Some(value) = line.trim().strip_prefix("project_id:") {
+            return Ok(frontmatter_value(value));
+        }
+    }
+
+    Err(format!("{} is missing project_id", path.display()))
+}
+
+fn usage_row_count(connection: &Connection, project_id: &str) -> AppResult<i64> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM usage WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("could not count usage rows: {error}"))
 }
 
 struct CodexSessionMatch {
@@ -711,7 +917,10 @@ fn default_duration_ms() -> AppResult<i64> {
         if let Some(value) = line.trim().strip_prefix("default_duration_ms:") {
             let value = frontmatter_value(value);
             return value.parse::<i64>().map_err(|error| {
-                format!("{} has invalid default_duration_ms: {error}", path.display())
+                format!(
+                    "{} has invalid default_duration_ms: {error}",
+                    path.display()
+                )
             });
         }
     }
@@ -783,21 +992,24 @@ Check totals with `ntkn status`.
 ## Cursor
 
 `ntkn init` installs a Cursor `stop` hook at `.cursor/hooks.json` and
-`.cursor/hooks/ntkn-record.sh`. Cursor does not consistently expose token usage
-in local hook payloads, so the hook records only when real token fields are
-present. Otherwise it exits cleanly and does not block Cursor.
+`.cursor/hooks/ntkn-record.sh`. The hook reads per-turn `input_tokens` and
+`output_tokens` from the Cursor stop payload (transcripts do not include usage).
 
-Supported fields include `prompt_tokens`, `completion_tokens`, `input_tokens`,
-`output_tokens`, and camelCase variants under `usage`, `token_usage`, or
-`tokenUsage`.
+If totals look stale after Cursor work, run:
+
+```sh
+ntkn sync-cursor
+```
+
+That replays the last captured stop payload from `.ntkn/cursor-last-payload.json`.
+Finish at least one agent turn first so the stop hook can capture token fields.
 
 Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
 
-If Cursor does not provide token counts, call `ntkn record` manually from your
-own wrapper or automation.
+Check totals with `ntkn status`.
 "#,
         yaml_string(project)
     )
@@ -1215,6 +1427,14 @@ mod tests {
         assert_eq!(format_duration(62_000), "1m 2s");
         assert_eq!(format_speed(1500, 0), "-");
         assert_eq!(format_speed(1500, 10_000), "150 tok/s");
+    }
+
+    #[test]
+    fn cursor_project_slug_replaces_slashes() {
+        assert_eq!(
+            cursor_project_slug(Path::new("/Users/tom/Projects/GitHub/ntkn")),
+            "Users-tom-Projects-GitHub-ntkn"
+        );
     }
 
     #[test]

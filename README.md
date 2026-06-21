@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.3.1-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records prompt tokens, completion tokens, model name, and optional execution
@@ -43,16 +43,21 @@ enough token data.
 
 ## Supported tools
 
-| Tool | Hook | Wiring | Automatic recording | Manual fallback |
-| --- | --- | --- | --- | --- |
-| Claude Code | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn record` |
-| Codex | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
-| Cursor | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | When the hook payload includes token fields | `ntkn record` |
+| Tool | Provider | Hook | Wiring | Automatic recording | Manual fallback |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn record` |
+| Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
+| Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
+
+Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
+slug in Cursor (multi-provider routing) are separate usage streams. `ntkn status`
+groups by `model_name` only today; check which tool recorded each row via
+`ntkn history` timestamps and your active agent session.
 
 Claude Code reads session transcripts and deduplicates assistant messages.
 Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
-Stop hooks are untrusted or stale. Cursor local transcripts often omit token
-totals, so manual `ntkn record` is common there.
+Stop hooks are untrusted or stale. Cursor reads `input_tokens`/`output_tokens`
+from the stop hook payload; use `ntkn sync-cursor` to replay the last capture.
 
 See [Hook notes](#hook-notes) for setup details per tool.
 
@@ -384,13 +389,24 @@ Layout after init:
   hooks.json
   hooks/
     ntkn-record.sh
+.ntkn/
+  cursor-state.json
 ```
 
-Cursor project hooks run from the project root. The bundled hook reads the hook
-payload, looks for real token fields, and calls `ntkn record` when they exist.
-Supported fields include `prompt_tokens`, `completion_tokens`, `input_tokens`,
-`output_tokens`, and camelCase variants under `usage`, `token_usage`, or
-`tokenUsage`.
+Cursor project hooks run from the project root. The bundled hook reads per-turn
+`input_tokens` and `output_tokens` from the Cursor stop payload. Transcripts do
+not include usage; the stop hook is the source of truth. Each capture is saved to
+`.ntkn/cursor-last-payload.json` for `ntkn sync-cursor` replay.
+
+**Recommended if totals look stale:**
+
+```sh
+ntkn sync-cursor
+ntkn status
+```
+
+That replays `.ntkn/cursor-last-payload.json` from the last stop hook capture.
+Finish at least one agent turn first so the stop hook receives token fields.
 
 Requirements:
 
@@ -398,10 +414,26 @@ Requirements:
 - `jq` installed
 - Run `ntkn init --project <name>` once in the project root
 
-Cursor local transcripts currently do not consistently include token totals. If
-Cursor does not send token fields to the hook, the hook exits cleanly and records
-nothing. In that case, call `ntkn record` manually or from your own Cursor
-automation after the request:
+Hook wiring in `.cursor/hooks.json`:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": ".cursor/hooks/ntkn-record.sh",
+        "timeout": 30
+      }
+    ]
+  }
+}
+```
+
+If `.cursor/hooks.json` already exists, `ntkn init` refreshes it when the ntkn
+hook is already present; otherwise it prints a merge note.
+
+Manual fallback when Cursor does not send usage fields:
 
 ```sh
 ntkn record --project my-project --model cursor --prompt 1200 --comp 300
