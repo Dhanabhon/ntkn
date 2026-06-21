@@ -35,9 +35,14 @@ if [[ -z "$session_id" ]]; then
   finish
 fi
 
-rules="$project_dir/.agents/rules/ntkn-rules.md"
+rules="$project_dir/.ntkn/rules/ntkn-rules.md"
+legacy_rules="$project_dir/.agents/rules/ntkn-rules.md"
 state="$project_dir/.ntkn/codex-state.json"
 legacy_state="$project_dir/.agents/ntkn-codex-state.json"
+
+if [[ ! -f "$rules" && -f "$legacy_rules" ]]; then
+  rules="$legacy_rules"
+fi
 
 if [[ ! -f "$rules" ]]; then
   finish

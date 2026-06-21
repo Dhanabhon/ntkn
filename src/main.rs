@@ -8,11 +8,14 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command as ProcessCommand, ExitCode, Stdio};
+use std::time::SystemTime;
 
 type AppResult<T> = Result<T, String>;
 
 const AGENTS_DIR: &str = ".agents";
+const DATA_DIR: &str = ".ntkn";
 const DB_FILE: &str = "ntkn.sqlite";
 const RULES_FILE: &str = "ntkn-rules.md";
 const CLAUDE_HOOK_SCRIPT: &str = "hooks/claude-code/ntkn-record.sh";
@@ -65,6 +68,8 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         limit: i64,
     },
+    /// Pull Codex token usage from the latest session JSONL for this project.
+    SyncCodex,
 }
 
 struct ModelSummary {
@@ -104,6 +109,7 @@ fn run() -> AppResult<()> {
         }) => record(&project, &model, prompt, completion, duration),
         Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
+        Some(Command::SyncCodex) => sync_codex(),
         None => {
             print_splash();
             Ok(())
@@ -128,13 +134,13 @@ fn print_splash() {
         "  ntkn record --project <PROJ> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]"
     );
     println!("  ntkn status");
+    println!("  ntkn sync-codex");
     println!("  ntkn history --limit <NUM>");
     println!();
     println!("{}", "Data".bold());
-    println!("  .agents/ntkn.sqlite");
-    println!("  .agents/rules/ntkn-rules.md");
-    println!("  .agents/hooks/claude-code/ntkn-record.sh");
-    println!("  .agents/hooks/codex/ntkn-record.sh");
+    println!("  .ntkn/ntkn.sqlite");
+    println!("  .ntkn/rules/ntkn-rules.md");
+    println!("  .ntkn/hooks/codex/ntkn-record.sh");
     println!("  ~/.codex/hooks/ntkn-dispatch.sh");
     println!("  ~/.codex/hooks.json");
     println!("  .claude/settings.json");
@@ -142,6 +148,8 @@ fn print_splash() {
 
 fn init(project: &str) -> AppResult<()> {
     validate_required(project, "project")?;
+
+    migrate_legacy_layout()?;
 
     let rules_dir = rules_dir()?;
     fs::create_dir_all(&rules_dir)
@@ -188,9 +196,263 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
-        "Codex: open /hooks and trust the ntkn Stop hook once (required)."
+        "Codex Desktop has no /hooks command. Run `ntkn sync-codex` after Codex work."
             .yellow()
     );
+    println!(
+        "{}",
+        "Optional auto-recording: run `codex` in Terminal once and approve the startup \
+         \"Hooks need review\" prompt (CLI only)."
+            .yellow()
+    );
+    Ok(())
+}
+
+fn sync_codex() -> AppResult<()> {
+    let project_dir = project_root()?;
+    let hook_path = codex_hook_script_path()?;
+    if !hook_path.exists() {
+        return Err(format!(
+            "{} not found; run `ntkn init --project <NAME>` first",
+            hook_path.display()
+        ));
+    }
+
+    let session = find_latest_codex_session(&project_dir)?;
+    let payload = format!(
+        r#"{{"session_id":"{}","transcript_path":{},"cwd":{},"hook_event_name":"Stop"}}"#,
+        session.session_id,
+        json_string(&session.transcript.display().to_string()),
+        json_string(&project_dir.display().to_string())
+    );
+
+    let mut child = ProcessCommand::new("bash")
+        .arg(&hook_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", hook_path.display()))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "could not write hook payload".to_owned())?
+        .write_all(payload.as_bytes())
+        .map_err(|error| format!("could not write hook payload: {error}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {}: {error}", hook_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "codex sync hook failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    println!(
+        "{}",
+        format!(
+            "synced Codex usage from {}",
+            session.transcript.display()
+        )
+        .green()
+    );
+    status()
+}
+
+struct CodexSessionMatch {
+    session_id: String,
+    transcript: PathBuf,
+    modified: SystemTime,
+}
+
+fn find_latest_codex_session(project_dir: &Path) -> AppResult<CodexSessionMatch> {
+    let sessions_root = codex_home()?.join("sessions");
+    if !sessions_root.is_dir() {
+        return Err(format!(
+            "{} does not exist; run Codex in this project first",
+            sessions_root.display()
+        ));
+    }
+
+    let cwd = project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let cwd = cwd.display().to_string();
+    let mut best: Option<CodexSessionMatch> = None;
+    collect_codex_sessions(&sessions_root, &cwd, &mut best)?;
+
+    best.ok_or_else(|| {
+        format!(
+            "no Codex session found for {}; run Codex in this project first",
+            project_dir.display()
+        )
+    })
+}
+
+fn collect_codex_sessions(
+    dir: &Path,
+    cwd: &str,
+    best: &mut Option<CodexSessionMatch>,
+) -> AppResult<()> {
+    for entry in fs::read_dir(dir)
+        .map_err(|error| format!("could not read {}: {error}", dir.display()))?
+    {
+        let entry =
+            entry.map_err(|error| format!("could not read {} entry: {error}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_codex_sessions(&path, cwd, best)?;
+            continue;
+        }
+
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+            continue;
+        }
+
+        let Some(session_id) = read_codex_session_id(&path, cwd)? else {
+            continue;
+        };
+
+        let modified = entry
+            .metadata()
+            .map_err(|error| format!("could not read {} metadata: {error}", path.display()))?
+            .modified()
+            .map_err(|error| format!("could not read {} modified time: {error}", path.display()))?;
+
+        if best
+            .as_ref()
+            .map(|current| modified > current.modified)
+            .unwrap_or(true)
+        {
+            *best = Some(CodexSessionMatch {
+                session_id,
+                transcript: path,
+                modified,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn read_codex_session_id(path: &Path, cwd: &str) -> AppResult<Option<String>> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+
+    if !line.contains("\"session_meta\"") {
+        return Ok(None);
+    }
+
+    let cwd_marker = format!(r#""cwd":"{cwd}""#);
+    if !line.contains(&cwd_marker) {
+        return Ok(None);
+    }
+
+    let Some(id) = extract_json_string_field(&line, "id")? else {
+        return Ok(None);
+    };
+
+    Ok(Some(id))
+}
+
+fn extract_json_string_field(line: &str, field: &str) -> AppResult<Option<String>> {
+    let marker = format!(r#""{field}":"#);
+    let Some(start) = line.find(&marker) else {
+        return Ok(None);
+    };
+
+    let value_start = start + marker.len();
+    let bytes = line.as_bytes();
+    if value_start >= bytes.len() || bytes[value_start] != b'"' {
+        return Ok(None);
+    }
+
+    let mut value = String::new();
+    let mut index = value_start + 1;
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+        if ch == '\\' {
+            index += 1;
+            if index >= bytes.len() {
+                return Err(format!("invalid escape in {field} field"));
+            }
+            value.push(bytes[index] as char);
+        } else if ch == '"' {
+            return Ok(Some(value));
+        } else {
+            value.push(ch);
+        }
+        index += 1;
+    }
+
+    Err(format!("unterminated {field} field"))
+}
+
+fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn migrate_legacy_layout() -> AppResult<()> {
+    let root = project_root()?;
+    let legacy_dir = root.join(AGENTS_DIR);
+    let data_dir = root.join(DATA_DIR);
+    fs::create_dir_all(&data_dir).map_err(|error| {
+        format!(
+            "could not create {}: {error}",
+            data_dir.display()
+        )
+    })?;
+
+    let legacy_db = legacy_dir.join(DB_FILE);
+    let data_db = data_dir.join(DB_FILE);
+    if legacy_db.exists() && !data_db.exists() {
+        fs::copy(&legacy_db, &data_db).map_err(|error| {
+            format!(
+                "could not migrate {} to {}: {error}",
+                legacy_db.display(),
+                data_db.display()
+            )
+        })?;
+    }
+
+    let legacy_rules = legacy_dir.join("rules").join(RULES_FILE);
+    let data_rules = data_dir.join("rules").join(RULES_FILE);
+    if legacy_rules.exists() && !data_rules.exists() {
+        if let Some(parent) = data_rules.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!("could not create {}: {error}", parent.display())
+            })?;
+        }
+        fs::copy(&legacy_rules, &data_rules).map_err(|error| {
+            format!(
+                "could not migrate {} to {}: {error}",
+                legacy_rules.display(),
+                data_rules.display()
+            )
+        })?;
+    }
+
     Ok(())
 }
 
@@ -442,9 +704,9 @@ budget_limit: 100000
 
 ## Claude Code
 
-`ntkn init` installs a Stop hook at `.agents/hooks/claude-code/ntkn-record.sh`
+`ntkn init` installs a Stop hook at `.ntkn/hooks/claude-code/ntkn-record.sh`
 and wires it from `.claude/settings.json`. After each turn, the hook reads the
-session transcript and appends new usage rows to `.agents/ntkn.sqlite`.
+session transcript and appends new usage rows to `.ntkn/ntkn.sqlite`.
 
 Requirements:
 
@@ -456,17 +718,33 @@ Check totals with `ntkn status`.
 
 ## Codex
 
-`ntkn init` installs a project hook at `.agents/hooks/codex/ntkn-record.sh`
-and a global dispatcher at `~/.codex/hooks/ntkn-dispatch.sh` wired from
-`~/.codex/hooks.json`. After each turn, the hook reads new `token_count`
-events from Codex session JSONL and appends usage rows to `.agents/ntkn.sqlite`.
+Codex Desktop has no `/hooks` slash command. The reliable way to refresh totals
+after Codex work is:
+
+```sh
+ntkn sync-codex
+```
+
+`ntkn init` also installs a Stop hook at `.ntkn/hooks/codex/ntkn-record.sh`
+and a global dispatcher at `~/.codex/hooks/ntkn-dispatch.sh`. That hook only
+runs after Codex trusts it. Codex Desktop does not expose a trust UI; trust once
+from the Terminal CLI instead:
+
+```sh
+cd /path/to/project
+codex
+```
+
+At startup, choose **Trust all and continue** when **Hooks need review** appears.
+That trust applies to Codex Desktop too.
+
+When working in this repo with Codex, run `ntkn sync-codex` before finishing a
+task so token totals stay current.
 
 Requirements:
 
 - `ntkn` on your PATH
 - `jq` installed
-- Trust the ntkn Stop hook in Codex with `/hooks` once. Codex skips untrusted
-  hooks silently.
 
 Check totals with `ntkn status`.
 "#,
@@ -505,7 +783,7 @@ fn install_claude_code_settings() -> AppResult<PathBuf> {
 }
 
 fn claude_hook_script_path() -> AppResult<PathBuf> {
-    Ok(agents_dir()?.join(CLAUDE_HOOK_SCRIPT))
+    Ok(data_dir()?.join(CLAUDE_HOOK_SCRIPT))
 }
 
 fn claude_settings_dir() -> AppResult<PathBuf> {
@@ -555,6 +833,18 @@ fn install_global_codex_hook() -> AppResult<PathBuf> {
             )
         })?;
         if existing.contains("ntkn-dispatch.sh") {
+            fs::write(&hooks_path, hooks_content).map_err(|error| {
+                format!(
+                    "could not refresh {}: {error}",
+                    hooks_path.display()
+                )
+            })?;
+            println!(
+                "{}",
+                "refreshed ~/.codex/hooks.json; if you use the Codex CLI, approve \
+                 the startup Hooks need review prompt again when it appears"
+                    .yellow()
+            );
             return Ok(dispatch_path);
         }
 
@@ -607,7 +897,7 @@ fn codex_home() -> AppResult<PathBuf> {
 }
 
 fn codex_hook_script_path() -> AppResult<PathBuf> {
-    Ok(agents_dir()?.join(CODEX_HOOK_SCRIPT))
+    Ok(data_dir()?.join(CODEX_HOOK_SCRIPT))
 }
 
 fn codex_hooks_dir() -> AppResult<PathBuf> {
@@ -745,7 +1035,17 @@ fn existing_db_path() -> AppResult<PathBuf> {
 }
 
 fn db_path() -> AppResult<PathBuf> {
-    Ok(agents_dir()?.join(DB_FILE))
+    let preferred = data_dir()?.join(DB_FILE);
+    if preferred.exists() {
+        return Ok(preferred);
+    }
+
+    let legacy = legacy_agents_dir()?.join(DB_FILE);
+    if legacy.exists() {
+        return Ok(legacy);
+    }
+
+    Ok(preferred)
 }
 
 fn rules_path() -> AppResult<PathBuf> {
@@ -753,13 +1053,33 @@ fn rules_path() -> AppResult<PathBuf> {
 }
 
 fn rules_dir() -> AppResult<PathBuf> {
-    Ok(agents_dir()?.join("rules"))
+    let preferred = data_dir()?.join("rules");
+    if preferred.join(RULES_FILE).exists() {
+        return Ok(preferred);
+    }
+
+    let legacy = legacy_agents_dir()?.join("rules");
+    if legacy.join(RULES_FILE).exists() {
+        return Ok(legacy);
+    }
+
+    Ok(preferred)
 }
 
-fn agents_dir() -> AppResult<PathBuf> {
-    Ok(env::current_dir()
-        .map_err(|error| format!("could not read current directory: {error}"))?
-        .join(AGENTS_DIR))
+fn data_dir() -> AppResult<PathBuf> {
+    if let Ok(dir) = env::var("NTKN_DATA_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+
+    Ok(project_root()?.join(DATA_DIR))
+}
+
+fn legacy_agents_dir() -> AppResult<PathBuf> {
+    Ok(project_root()?.join(AGENTS_DIR))
+}
+
+fn project_root() -> AppResult<PathBuf> {
+    env::current_dir().map_err(|error| format!("could not read current directory: {error}"))
 }
 
 fn format_tokens(value: i64) -> String {

@@ -15,11 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `reasoning_output_tokens` field name
 - Codex hook now catches up all missed `token_count` events since the last Stop
   and groups usage by model when the active model changes mid-session
-- README documents that Codex skips untrusted hooks until you approve them in
-  `/hooks`
-- `ntkn init` installs a global Codex dispatcher at `~/.codex/hooks/ntkn-dispatch.sh`
-  so one `/hooks` trust covers all initialized projects
-- Codex dedupe state moves to `.ntkn/codex-state.json` (writable in Codex sandbox)
+- README documents that Codex skips untrusted hooks until approved from the
+  Terminal CLI startup prompt (Codex Desktop has no `/hooks` command)
+- `ntkn sync-codex` command pulls Codex usage from the latest session JSONL
+- Project data moves to `.ntkn/` (writable in Codex sandbox) with legacy
+  `.agents/` migration on init
 
 ## [0.2.0] - 2026-06-21
 

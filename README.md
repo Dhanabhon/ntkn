@@ -107,6 +107,36 @@ You only need `ntkn init` once per project. After changing `ntkn`, run
 and run `ntkn status` or `ntkn record`. Existing `.agents/ntkn.sqlite` files are
 reused.
 
+## Uninstall
+
+To remove ntkn from a project, delete the project-local artifacts:
+
+```sh
+rm -rf .agents
+rm -f .claude/settings.json
+```
+
+If a project is using Codex hooks, also remove:
+
+```sh
+rm -f .codex/hooks.json
+```
+
+If you installed ntkn globally and want to remove the binary:
+
+```sh
+cargo uninstall ntkn
+```
+
+If you no longer want global hook wiring, also remove:
+
+```sh
+rm -f ~/.codex/hooks/ntkn-dispatch.sh
+```
+
+Removing `.agents` is enough to stop local collection for that project; keep hook
+files if you only want to clear history.
+
 ## Schema
 
 ```sql
@@ -193,32 +223,46 @@ totals with `ntkn status`.
 
 ### Codex
 
-Unlike RTK (which hooks shell commands via `RTK.md`), ntkn records Codex API
-token usage through a **Stop hook**. Codex skips untrusted hooks silently, so
-you must approve the hook once before totals update automatically.
+Unlike RTK (which hooks shell commands via `RTK.md`), ntkn reads Codex API usage
+from session JSONL files. **Codex Desktop has no `/hooks` command**, so automatic
+Stop-hook recording usually does not happen until you trust hooks from the
+Terminal CLI.
 
-`ntkn init` installs:
+**Recommended after Codex work:**
 
-- Project recorder: `.agents/hooks/codex/ntkn-record.sh`
+```sh
+ntkn sync-codex
+ntkn status
+```
+
+That pulls usage from the latest Codex session for this project. No hook trust
+required.
+
+`ntkn init` also installs:
+
+- Project recorder: `.ntkn/hooks/codex/ntkn-record.sh`
 - Global dispatcher: `~/.codex/hooks/ntkn-dispatch.sh`
 - Global wiring: `~/.codex/hooks.json` (created if missing)
 
 Layout after init:
 
 ```text
-.agents/
+.ntkn/
   ntkn.sqlite
+  codex-state.json
   hooks/
+    claude-code/
+      ntkn-record.sh
     codex/
       ntkn-record.sh
   rules/
     ntkn-rules.md
-.ntkn/
-  codex-state.json
 ~/.codex/
   hooks/
     ntkn-dispatch.sh
   hooks.json
+.claude/
+  settings.json
 ```
 
 Codex session JSONL files emit `token_count` events with a per-turn
@@ -231,14 +275,20 @@ Requirements:
 - `ntkn` on your PATH
 - `jq` installed
 - Run `ntkn init --project <name>` once in the project root
-- **Trust the ntkn Stop hook in Codex with `/hooks`** — until you approve it,
-  `ntkn status` will stay stale even while Codex is working. Re-trust after
-  hook script updates.
 
-After init you should see `Recording token usage (ntkn)` at the end of Codex
-turns (similar to how RTK surfaces proxied commands). If you still have a
-project `.codex/hooks.json` from an older setup, remove it to avoid
-double-recording.
+**Optional automatic recording (Terminal CLI only):**
+
+```sh
+cd /path/to/project
+codex
+```
+
+When **Hooks need review** appears at startup, choose **Trust all and continue**.
+Codex skips untrusted hooks silently. Codex Desktop has no trust UI of its
+own, but trusting once in the CLI also covers Desktop sessions.
+
+If you still have a project `.codex/hooks.json` from an older setup, remove it
+to avoid double-recording.
 
 Hook wiring in `~/.codex/hooks.json`:
 
@@ -250,8 +300,7 @@ Hook wiring in `~/.codex/hooks.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "bash",
-            "args": ["/Users/you/.codex/hooks/ntkn-dispatch.sh"],
+            "command": "/Users/you/.codex/hooks/ntkn-dispatch.sh",
             "timeout": 30,
             "statusMessage": "Recording token usage (ntkn)"
           }

@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PROJECT_DIR}/.agents/hooks/claude-code/ntkn-record.sh"],
+            "args": ["${CLAUDE_PROJECT_DIR}/.ntkn/hooks/claude-code/ntkn-record.sh"],
             "async": true
           }
         ]
