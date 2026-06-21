@@ -3,6 +3,8 @@ name = "ntkn"
 version = "0.1.0"
 edition = "2024"
 authors = ["Tom Dhanabhon <tom@dhanabhon.com>"]
+homepage = "https://github.com/dhanabhon/ntkn"
+repository = "https://github.com/dhanabhon/ntkn"
 description = "Local token tracker for AI agents."
 license = "MIT"
 

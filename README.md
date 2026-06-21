@@ -62,6 +62,29 @@ Show recent rows:
 ntkn history --limit 20
 ```
 
+## test in another project
+
+Install the current local build first:
+
+```sh
+cd /Users/tom/Projects/GitHub/ntkn
+cargo install --path .
+```
+
+Then move to the project you want to track:
+
+```sh
+cd /path/to/other/project
+ntkn init --project other-project
+ntkn record --project other-project --model gpt-5 --prompt 1200 --comp 300 --duration 5400
+ntkn status
+```
+
+You only need `ntkn init` once per project. After changing `ntkn`, run
+`cargo install --path .` again from this repo, then go back to the other project
+and run `ntkn status` or `ntkn record`. Existing `.agents/ntkn.sqlite` files are
+reused.
+
 ## schema
 
 ```sql
@@ -80,6 +103,19 @@ CREATE TABLE usage (
 
 `record` exits with a clear error if `.agents/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
+
+## contribute
+
+Use the normal Rust toolchain:
+
+```sh
+cargo fmt
+cargo test
+cargo clippy -- -D warnings
+```
+
+Keep changes small. If you change database behavior, make old `.agents/ntkn.sqlite`
+files keep working or document the migration path in the pull request.
 
 ## license
 
