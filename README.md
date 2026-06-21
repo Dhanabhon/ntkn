@@ -2,15 +2,30 @@
 
 [![version](https://img.shields.io/badge/version-0.11.1-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
-`ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
-It records provider, model name, prompt tokens, and completion tokens in a
-SQLite database inside the current project.
+`ntkn` (pronounced "nub-token" 🇹🇭) is project-level token accounting for AI
+agent work. It shows how many tokens each project uses, split by provider and
+model, so you can see where AI usage is going instead of guessing from scattered
+tool output.
 
-It is designed for hooks. Call `ntkn record` after an API request and keep the
-accounting local.
+Each project gets its own local SQLite ledger. Hooks call `ntkn record` after an
+AI turn, and `ntkn usage` / `ntkn stats` turn those rows into per-project totals,
+activity, and model-level breakdowns.
 
 > [!WARNING]
 > This project is currently a **work in progress** and is **not ready for general or production use**. Features may be incomplete, unstable, or subject to breaking changes.
+
+## Why project-level token accounting?
+
+AI tools usually show token usage inside their own session, if they show it at
+all. That makes it hard to answer simple project questions:
+
+- Which project is using the most tokens?
+- Which model or provider is responsible for that usage?
+- How much activity happened in the last week or month?
+- Did a reset, hook, or agent switch change the numbers?
+
+ntkn keeps that accounting beside the codebase. The result is a small local
+ledger per project, with no remote service and no shared global database.
 
 ## How it works
 
