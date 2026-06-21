@@ -30,7 +30,7 @@ const CODEX_DISPATCH_ARG: &str = "__NTKN_DISPATCH__";
 #[command(
     name = "ntkn",
     version,
-    about = "NTKN: Local Token Tracker for AI Agents",
+    about = "Nub Token : Local Token Tracker for AI Agents",
     arg_required_else_help = false
 )]
 struct Cli {
@@ -116,7 +116,7 @@ fn print_splash() {
     println!(
         "{}",
         format!(
-            "NTKN: Local Token Tracker for AI Agents v{}",
+            "Nub Token : Local Token Tracker for AI Agents v{}",
             env!("CARGO_PKG_VERSION")
         )
         .dimmed()
