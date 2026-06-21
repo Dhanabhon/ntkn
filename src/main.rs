@@ -1,7 +1,7 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use comfy_table::{Attribute, Cell, ContentArrangement, Table, presets::UTF8_FULL};
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use rusqlite::{Connection, params};
 use std::env;
 use std::fs;
@@ -32,6 +32,10 @@ const CURSOR_HOOK_SCRIPT: &str = "hooks/ntkn-record.sh";
 const CURSOR_HOOKS_FILE: &str = "hooks.json";
 const CURSOR_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/cursor/ntkn-record.sh");
 const CURSOR_HOOKS_CONTENT: &str = include_str!("../hooks/cursor/hooks.json");
+const AGY_HOOK_SCRIPT: &str = "hooks/ntkn-record.sh";
+const AGY_HOOKS_FILE: &str = "hooks.json";
+const AGY_HOOK_SCRIPT_CONTENT: &str = include_str!("../hooks/agy/ntkn-record.sh");
+const AGY_HOOKS_CONTENT: &str = include_str!("../hooks/agy/hooks.json");
 
 #[derive(Parser)]
 #[command(
@@ -69,7 +73,7 @@ enum Command {
     },
     /// Show token usage totals for the current project.
     Usage,
-    /// Alias for usage.
+    /// Show project setup and hook health.
     Status,
     /// Show recent usage events for the current project.
     History {
@@ -84,6 +88,8 @@ enum Command {
     SyncCodex,
     /// Replay the Cursor stop hook against the latest agent transcript for this project.
     SyncCursor,
+    /// Replay the latest Antigravity stop hook capture for this project.
+    SyncAgy,
 }
 
 struct ModelSummary {
@@ -123,12 +129,14 @@ fn run() -> AppResult<()> {
             completion,
             duration,
         }) => record(&project, &provider, &model, prompt, completion, duration),
-        Some(Command::Usage | Command::Status) => usage(),
+        Some(Command::Usage) => usage(),
+        Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
         Some(Command::Reset) => reset_stats(),
         Some(Command::SyncClaude) => sync_claude(),
         Some(Command::SyncCodex) => sync_codex(),
         Some(Command::SyncCursor) => sync_cursor(),
+        Some(Command::SyncAgy) => sync_agy(),
         None => {
             print_splash();
             Ok(())
@@ -158,6 +166,7 @@ fn print_splash() {
     println!("  ntkn sync-claude");
     println!("  ntkn sync-codex");
     println!("  ntkn sync-cursor");
+    println!("  ntkn sync-agy");
     println!("  ntkn history --limit <NUM>");
     println!("  ntkn -V, --version");
     println!();
@@ -166,10 +175,12 @@ fn print_splash() {
     println!("  .ntkn/rules/ntkn-rules.md");
     println!("  .ntkn/hooks/codex/ntkn-record.sh");
     println!("  .cursor/hooks/ntkn-record.sh");
+    println!("  .agy/hooks/ntkn-record.sh");
     println!("  ~/.codex/hooks/ntkn-dispatch.sh");
     println!("  ~/.codex/hooks.json");
     println!("  .claude/settings.json");
     println!("  .cursor/hooks.json");
+    println!("  .agy/hooks.json");
 }
 
 fn init(project: &str) -> AppResult<()> {
@@ -198,6 +209,8 @@ fn init(project: &str) -> AppResult<()> {
     let codex_dispatch_path = install_global_codex_hook()?;
     let cursor_hook_path = install_cursor_hooks()?;
     let cursor_hooks_path = install_cursor_hooks_config()?;
+    let agy_hook_path = install_agy_hooks()?;
+    let agy_hooks_path = install_agy_hooks_config()?;
     warn_about_project_codex_hooks()?;
 
     println!(
@@ -232,12 +245,26 @@ fn init(project: &str) -> AppResult<()> {
     );
     println!(
         "{}",
+        format!("agy hook: {}", agy_hook_path.display()).dimmed()
+    );
+    println!(
+        "{}",
+        format!("agy hooks: {}", agy_hooks_path.display()).dimmed()
+    );
+    println!(
+        "{}",
         "Codex Desktop has no /hooks command. Run `ntkn sync-codex` after Codex work.".yellow()
     );
     println!(
         "{}",
         "Cursor records usage from stop-hook input_tokens/output_tokens. Run \
          `ntkn sync-cursor` if totals look stale."
+            .yellow()
+    );
+    println!(
+        "{}",
+        "Antigravity records usage from stop-hook input_tokens/output_tokens. Run \
+         `ntkn sync-agy` if totals look stale."
             .yellow()
     );
     println!(
@@ -439,6 +466,74 @@ fn sync_cursor() -> AppResult<()> {
     }
 
     println!("{}", "synced Cursor usage from last stop payload".green());
+    usage()
+}
+
+fn sync_agy() -> AppResult<()> {
+    let hook_path = agy_hook_script_path()?;
+    if !hook_path.exists() {
+        return Err(format!(
+            "{} not found; run `ntkn init --project <NAME>` first",
+            hook_path.display()
+        ));
+    }
+
+    let connection = open_existing_connection()?;
+    let project_id = read_project_id()?;
+    let count_before = usage_row_count(&connection, &project_id)?;
+
+    let payload_path = data_dir()?.join("agy-last-payload.json");
+    if !payload_path.is_file() {
+        return Err(format!(
+            "{} does not exist. Finish an Antigravity agent turn first so the stop hook captures usage",
+            payload_path.display()
+        ));
+    }
+    let payload = fs::read_to_string(&payload_path)
+        .map_err(|error| format!("could not read {}: {error}", payload_path.display()))?;
+
+    let mut child = ProcessCommand::new("bash")
+        .arg(&hook_path)
+        .env("NTKN_FORCE_SYNC", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", hook_path.display()))?;
+
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "could not write hook payload".to_owned())?
+        .write_all(payload.as_bytes())
+        .map_err(|error| format!("could not write hook payload: {error}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("could not wait for {}: {error}", hook_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "agy sync hook failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        ));
+    }
+
+    let count_after = usage_row_count(&connection, &project_id)?;
+    if count_after == count_before {
+        return Err(
+            "no new Antigravity usage found. Finish an Antigravity agent turn first so the stop \
+             hook captures input_tokens/output_tokens; then run `ntkn sync-agy` again"
+                .to_owned(),
+        );
+    }
+
+    println!(
+        "{}",
+        "synced Antigravity usage from last stop payload".green()
+    );
     usage()
 }
 
@@ -937,6 +1032,120 @@ fn usage() -> AppResult<()> {
     Ok(())
 }
 
+fn status() -> AppResult<()> {
+    let root = project_root()?;
+    let rules = rules_path()?;
+    let db = db_path()?;
+    let project = read_project_id().ok();
+    let row_count = match &project {
+        Some(project) if db.exists() => {
+            let connection = open_existing_connection()?;
+            usage_row_count(&connection, project)?
+        }
+        _ => 0,
+    };
+    let default_duration = default_duration_ms().unwrap_or(0);
+
+    let claude_hook = claude_hook_script_path()?;
+    let claude_settings = claude_settings_dir()?.join(CLAUDE_SETTINGS_FILE);
+    let codex_hook = codex_hook_script_path()?;
+    let codex_dispatch = codex_home()?.join("hooks").join("ntkn-dispatch.sh");
+    let codex_hooks = codex_home()?.join(CODEX_HOOKS_FILE);
+    let cursor_hook = cursor_hook_script_path()?;
+    let cursor_hooks = cursor_hooks_dir()?.join(CURSOR_HOOKS_FILE);
+    let agy_hook = agy_hook_script_path()?;
+    let agy_hooks = agy_hooks_dir()?.join(AGY_HOOKS_FILE);
+
+    let mut table = base_table();
+    table.set_header(vec!["Check", "Status", "Value"]);
+    table.add_row(status_row("Project root", true, root.display().to_string()));
+    table.add_row(status_row(
+        "Project id",
+        project.is_some(),
+        project.unwrap_or_else(|| "missing; run `ntkn init --project <NAME>`".to_owned()),
+    ));
+    table.add_row(status_row(
+        "Database",
+        db.exists(),
+        db.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Rules",
+        rules.exists(),
+        rules.display().to_string(),
+    ));
+    table.add_row(status_row("Usage rows", true, row_count.to_string()));
+    table.add_row(status_row(
+        "Default duration",
+        true,
+        format!("{default_duration} ms"),
+    ));
+    table.add_row(status_row(
+        "Claude hook",
+        claude_hook.exists(),
+        claude_hook.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Claude settings",
+        claude_settings.exists(),
+        claude_settings.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Codex hook",
+        codex_hook.exists(),
+        codex_hook.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Codex dispatcher",
+        codex_dispatch.exists(),
+        codex_dispatch.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Codex hooks",
+        codex_hooks.exists(),
+        codex_hooks.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Cursor hook",
+        cursor_hook.exists(),
+        cursor_hook.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Cursor hooks",
+        cursor_hooks.exists(),
+        cursor_hooks.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Antigravity hook",
+        agy_hook.exists(),
+        agy_hook.display().to_string(),
+    ));
+    table.add_row(status_row(
+        "Antigravity hooks",
+        agy_hooks.exists(),
+        agy_hooks.display().to_string(),
+    ));
+
+    println!("{table}");
+    if !db.exists() || !rules.exists() {
+        println!(
+            "{}",
+            "run `ntkn init --project <NAME>` in this project to install ntkn".yellow()
+        );
+    }
+    Ok(())
+}
+
+fn status_row(label: &str, ok: bool, value: String) -> Vec<Cell> {
+    let status = if ok {
+        Cell::new("ok").fg(Color::Green)
+    } else {
+        Cell::new("missing").fg(Color::Yellow)
+    };
+
+    vec![Cell::new(label), status, Cell::new(value)]
+}
+
 fn history(limit: i64) -> AppResult<()> {
     validate_limit(limit)?;
 
@@ -1237,6 +1446,28 @@ Requirements:
 - `jq` installed
 
 Check totals with `ntkn usage`.
+
+## Antigravity
+
+`ntkn init` installs an Antigravity `stop` hook at `.agy/hooks.json` and
+`.agy/hooks/ntkn-record.sh`. The hook reads per-turn `input_tokens` and
+`output_tokens` from the Antigravity stop payload.
+
+If totals look stale after Antigravity work, run:
+
+```sh
+ntkn sync-agy
+```
+
+That replays the last captured stop payload from `.ntkn/agy-last-payload.json`.
+Finish at least one agent turn first so the stop hook can capture token fields.
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+
+Check totals with `ntkn usage`.
 "#,
         yaml_string(project)
     )
@@ -1433,6 +1664,61 @@ fn cursor_hooks_dir() -> AppResult<PathBuf> {
     Ok(env::current_dir()
         .map_err(|error| format!("could not read current directory: {error}"))?
         .join(".cursor"))
+}
+
+fn install_agy_hooks() -> AppResult<PathBuf> {
+    let hook_path = agy_hook_script_path()?;
+    if let Some(parent) = hook_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    }
+
+    fs::write(&hook_path, AGY_HOOK_SCRIPT_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hook_path.display()))?;
+    make_executable(&hook_path)?;
+
+    Ok(hook_path)
+}
+
+fn install_agy_hooks_config() -> AppResult<PathBuf> {
+    let hooks_dir = agy_hooks_dir()?;
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|error| format!("could not create {}: {error}", hooks_dir.display()))?;
+
+    let hooks_path = hooks_dir.join(AGY_HOOKS_FILE);
+    if hooks_path.exists() {
+        let existing = fs::read_to_string(&hooks_path)
+            .map_err(|error| format!("could not read {}: {error}", hooks_path.display()))?;
+        if existing.contains("ntkn-record.sh") {
+            fs::write(&hooks_path, AGY_HOOKS_CONTENT)
+                .map_err(|error| format!("could not refresh {}: {error}", hooks_path.display()))?;
+        } else {
+            println!(
+                "{}",
+                format!(
+                    "note: {} already exists; merge the stop hook from hooks/agy/hooks.json",
+                    hooks_path.display()
+                )
+                .yellow()
+            );
+        }
+        return Ok(hooks_path);
+    }
+
+    fs::write(&hooks_path, AGY_HOOKS_CONTENT)
+        .map_err(|error| format!("could not write {}: {error}", hooks_path.display()))?;
+
+    Ok(hooks_path)
+}
+
+fn agy_hook_script_path() -> AppResult<PathBuf> {
+    Ok(agy_hooks_dir()?.join(AGY_HOOK_SCRIPT))
+}
+
+fn agy_hooks_dir() -> AppResult<PathBuf> {
+    Ok(env::current_dir()
+        .map_err(|error| format!("could not read current directory: {error}"))?
+        .join(".agy"))
 }
 
 fn make_executable(path: &Path) -> AppResult<()> {

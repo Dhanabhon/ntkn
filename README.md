@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.8.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, and completion tokens in a
@@ -32,14 +32,18 @@ accounting local.
   hooks.json
   hooks/
     ntkn-record.sh
+.agy/
+  hooks.json
+  hooks/
+    ntkn-record.sh
 .codex/
   hooks.json
 ```
 
 The SQLite database stores one row per call. The rules file stores the
 `project_id` used by `usage` and `history`. The hook files let Claude Code,
-Codex, and Cursor record usage after each turn when their hook payloads include
-enough token data.
+Codex, Cursor, and Antigravity record usage after each turn when their hook
+payloads include enough token data.
 
 ## Supported tools
 
@@ -48,22 +52,27 @@ enough token data.
 | Claude Code | Anthropic | Stop | `.claude/settings.json` → `.ntkn/hooks/claude-code/ntkn-record.sh` | Yes, after `ntkn init` | `ntkn sync-claude` |
 | Codex | OpenAI | Stop | `~/.codex/hooks.json` → `~/.codex/hooks/ntkn-dispatch.sh` → `.ntkn/hooks/codex/ntkn-record.sh` | After Terminal CLI hook trust (Desktop has no trust UI) | `ntkn sync-codex` |
 | Cursor | Multi-provider | stop | `.cursor/hooks.json` → `.cursor/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-cursor` |
+| Antigravity | Google / Multi-provider | stop | `.agy/hooks.json` → `.agy/hooks/ntkn-record.sh` | Yes, from stop `input_tokens`/`output_tokens` | `ntkn sync-agy` |
 
 Model names are not unique across tools: `gpt-5.4` in Codex (OpenAI) and the same
-slug in Cursor (multi-provider routing) are separate usage streams. `ntkn usage`
-groups by provider and model so those streams stay separate.
+slug in Cursor or Antigravity (multi-provider routing) are separate usage
+streams. `ntkn usage` groups by provider and model so those streams stay
+separate.
 
 Claude Code reads session transcripts and deduplicates assistant messages; use
 `ntkn sync-claude` to replay the latest transcript if totals look stale.
 Codex reads `token_count` events from session JSONL; use `ntkn sync-codex` when
 Stop hooks are untrusted or stale. Cursor reads `input_tokens`/`output_tokens`
 from the stop hook payload; use `ntkn sync-cursor` to replay the last capture.
+Antigravity uses the same stop-payload pattern with provider `agy`; use
+`ntkn sync-agy` to replay the last capture.
 
 `Stop` / `stop` is the agent lifecycle event that fires after an AI turn
 finishes. ntkn records usage there because responses, transcripts, and token
 events are complete enough to read. The capitalization is tool-specific:
-Claude Code and Codex use `Stop`; Cursor uses `stop`. This does not stop the
-agent; it means "run this hook after the agent stops responding for this turn."
+Claude Code and Codex use `Stop`; Cursor and Antigravity use `stop`. This does
+not stop the agent; it means "run this hook after the agent stops responding for
+this turn."
 
 See [Hook notes](#hook-notes) for setup details per tool.
 
@@ -93,12 +102,13 @@ ntkn
 | `ntkn init --project <NAME>` | Create `.ntkn/`, hooks, and rules for the current directory |
 | `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM> [--duration <MS>]` | Append one usage row |
 | `ntkn usage` | Show totals grouped by provider and model |
-| `ntkn status` | Alias for `ntkn usage` |
+| `ntkn status` | Show project setup and hook health |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
 | `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
 | `ntkn sync-claude` | Pull Claude Code usage from the latest transcript for this project |
 | `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
 | `ntkn sync-cursor` | Replay the last captured Cursor stop payload for this project |
+| `ntkn sync-agy` | Replay the last captured Antigravity stop payload for this project |
 
 ### Examples
 
@@ -125,6 +135,12 @@ Show totals for the current project:
 
 ```sh
 ntkn usage
+```
+
+Check setup and hook health:
+
+```sh
+ntkn status
 ```
 
 Show recent rows:
@@ -160,19 +176,26 @@ ntkn sync-cursor
 ntkn usage
 ```
 
+Replay the last Antigravity stop capture:
+
+```sh
+ntkn sync-agy
+ntkn usage
+```
+
 ### `record` flags
 
 | Flag | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--project` | yes | — | Project id from `.ntkn/rules/ntkn-rules.md` |
-| `--provider` | no | `manual` | Source tool: `manual`, `claude-code`, `codex`, or `cursor` |
+| `--provider` | no | `manual` | Source tool: `manual`, `claude-code`, `codex`, `cursor`, or `agy` |
 | `--model` | yes | — | Model name for this call |
 | `--prompt` | yes | — | Prompt-side token count |
 | `--comp` | yes | — | Completion-side token count |
 | `--duration` | no | `default_duration_ms` from rules | Stored for compatibility; not shown in `usage` yet |
 
-Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`).
-For manual entries, omit `--provider` or pass `--provider manual`.
+Bundled hooks set `--provider` automatically (`claude-code`, `codex`, `cursor`,
+`agy`). For manual entries, omit `--provider` or pass `--provider manual`.
 
 `--duration` uses `default_duration_ms` from `.ntkn/rules/ntkn-rules.md` when
 omitted. `ntkn init` creates this default:
@@ -220,6 +243,7 @@ reused.
 To remove ntkn from a project, delete the project-local artifacts:
 
 ```sh
+rm -rf .ntkn
 rm -rf .agents
 rm -f .claude/settings.json
 ```
@@ -230,10 +254,11 @@ If a project is using Codex hooks, also remove:
 rm -f .codex/hooks.json
 ```
 
-If a project is using Cursor hooks, also remove:
+If a project is using Cursor or Antigravity hooks, also remove:
 
 ```sh
 rm -rf .cursor
+rm -rf .agy
 ```
 
 If you installed ntkn globally and want to remove the binary:
@@ -248,7 +273,7 @@ If you no longer want global hook wiring, also remove:
 rm -f ~/.codex/hooks/ntkn-dispatch.sh
 ```
 
-Removing `.agents` is enough to stop local collection for that project; keep hook
+Removing `.ntkn` is enough to stop local collection for that project; keep hook
 files if you only want to clear history.
 
 ## Schema
@@ -271,8 +296,8 @@ CREATE TABLE usage (
 `record` exits with a clear error if `.ntkn/ntkn.sqlite` does not exist. Run
 `ntkn init --project <name>` once per project before wiring the hook.
 
-Bundled Claude Code, Codex, and Cursor hooks record token counts only. Duration
-fields are stored for compatibility but not shown in `usage` yet.
+Bundled Claude Code, Codex, Cursor, and Antigravity hooks record token counts
+only. Duration fields are stored for compatibility but not shown in `usage` yet.
 
 ### Claude Code
 
@@ -512,6 +537,60 @@ Manual fallback when Cursor does not send usage fields:
 
 ```sh
 ntkn record --project my-project --provider cursor --model gpt-5 --prompt 1200 --comp 300
+```
+
+### Antigravity
+
+`ntkn init` installs an Antigravity project `stop` hook.
+
+Layout after init:
+
+```text
+.agy/
+  hooks.json
+  hooks/
+    ntkn-record.sh
+.ntkn/
+  agy-state.json
+```
+
+The bundled hook reads per-turn `input_tokens` and `output_tokens` from the
+Antigravity stop payload and saves the last capture to
+`.ntkn/agy-last-payload.json`.
+
+**Recommended if totals look stale:**
+
+```sh
+ntkn sync-agy
+ntkn usage
+```
+
+Requirements:
+
+- `ntkn` on your PATH
+- `jq` installed
+- Run `ntkn init --project <name>` once in the project root
+
+Hook wiring in `.agy/hooks.json`:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": ".agy/hooks/ntkn-record.sh",
+        "timeout": 30
+      }
+    ]
+  }
+}
+```
+
+Manual fallback when Antigravity does not send usage fields:
+
+```sh
+ntkn record --project my-project --provider agy --model gemini-3 --prompt 1200 --comp 300
 ```
 
 ## Contribute

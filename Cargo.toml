@@ -1,6 +1,6 @@
 [package]
 name = "ntkn"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 authors = ["Tom Dhanabhon <tom@dhanabhon.com>"]
 homepage = "https://github.com/dhanabhon/ntkn"
@@ -11,6 +11,6 @@ license = "MIT"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
-colored = "2"
+colored = "3"
 comfy-table = "7"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
