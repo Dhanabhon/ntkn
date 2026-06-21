@@ -1,8 +1,9 @@
-use chrono::Utc;
+use chrono::{Datelike, Duration, NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -80,6 +81,8 @@ enum Command {
         #[arg(long, default_value_t = 10)]
         limit: i64,
     },
+    /// Show token usage activity heatmap.
+    Stats,
     /// Reset usage stats for the current project.
     Reset,
     /// Pull Claude Code token usage from the latest transcript for this project.
@@ -108,6 +111,13 @@ struct UsageRecord {
     timestamp: String,
 }
 
+struct StatsSummary {
+    all_time: i64,
+    last_7_days: i64,
+    last_30_days: i64,
+    favorite_model: Option<String>,
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -132,6 +142,7 @@ fn run() -> AppResult<()> {
         Some(Command::Usage) => usage(),
         Some(Command::Status) => status(),
         Some(Command::History { limit }) => history(limit),
+        Some(Command::Stats) => stats(),
         Some(Command::Reset) => reset_stats(),
         Some(Command::SyncClaude) => sync_claude(),
         Some(Command::SyncCodex) => sync_codex(),
@@ -162,6 +173,7 @@ fn print_splash() {
     );
     println!("  ntkn usage");
     println!("  ntkn status");
+    println!("  ntkn stats");
     println!("  ntkn reset");
     println!("  ntkn sync-claude");
     println!("  ntkn sync-codex");
@@ -953,15 +965,24 @@ fn record(
     let total = add_tokens(prompt, completion)?;
 
     let connection = open_existing_connection()?;
-    let timestamp = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let timestamp = now.to_rfc3339();
+    let timestamp_unix_ms = now.timestamp_millis();
 
     connection
         .execute(
             "INSERT INTO usage
-                (project_id, provider, model_name, prompt_tokens, completion_tokens, duration_ms, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (project_id, provider, model_name, prompt_tokens, completion_tokens, duration_ms, timestamp, timestamp_unix_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                project, provider, model, prompt, completion, duration, timestamp
+                project,
+                provider,
+                model,
+                prompt,
+                completion,
+                duration,
+                timestamp,
+                timestamp_unix_ms
             ],
         )
         .map_err(|error| format!("could not record usage: {error}"))?;
@@ -1146,6 +1167,220 @@ fn status_row(label: &str, ok: bool, value: String) -> Vec<Cell> {
     vec![Cell::new(label), status, Cell::new(value)]
 }
 
+fn stats() -> AppResult<()> {
+    let project = current_project_id()?;
+    let connection = open_existing_connection()?;
+    let today = Utc::now().date_naive();
+    let first_day = today - Duration::days(364);
+    let start = first_day - Duration::days(first_day.weekday().num_days_from_sunday() as i64);
+
+    let daily = daily_usage(&connection, &project, start)?;
+    let summary = stats_summary(&connection, &project, today)?;
+    print_heatmap(start, today, &daily);
+
+    println!();
+    println!(
+        "  {} {} {} {} {}",
+        format!("All time {}", format_compact_tokens(summary.all_time)).green(),
+        "·".dimmed(),
+        format!("Last 7 days {}", format_compact_tokens(summary.last_7_days)).green(),
+        "·".dimmed(),
+        format!(
+            "Last 30 days {}",
+            format_compact_tokens(summary.last_30_days)
+        )
+        .green()
+    );
+    println!();
+    println!(
+        "  {} {}         {} {}",
+        "Favorite model:".dimmed(),
+        summary
+            .favorite_model
+            .unwrap_or_else(|| "-".to_owned())
+            .green(),
+        "Total tokens:".dimmed(),
+        format_compact_tokens(summary.all_time).green().bold()
+    );
+    Ok(())
+}
+
+fn daily_usage(
+    connection: &Connection,
+    project: &str,
+    start: NaiveDate,
+) -> AppResult<HashMap<NaiveDate, i64>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT date(timestamp_unix_ms / 1000, 'unixepoch') AS day,
+                    SUM(prompt_tokens + completion_tokens)
+             FROM usage
+             WHERE project_id = ?1
+               AND timestamp_unix_ms >= ?2
+             GROUP BY day",
+        )
+        .map_err(|error| format!("could not query stats: {error}"))?;
+
+    let start_ms = day_start_ms(start)?;
+    let rows = statement
+        .query_map(params![project, start_ms], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| format!("could not query stats: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("could not read stats rows: {error}"))?;
+
+    let mut daily = HashMap::new();
+    for (day, total) in rows {
+        let day = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+            .map_err(|error| format!("could not parse stats date {day}: {error}"))?;
+        daily.insert(day, total);
+    }
+    Ok(daily)
+}
+
+fn stats_summary(
+    connection: &Connection,
+    project: &str,
+    today: NaiveDate,
+) -> AppResult<StatsSummary> {
+    let last_7_start = day_start_ms(today - Duration::days(6))?;
+    let last_30_start = day_start_ms(today - Duration::days(29))?;
+    let all_time = sum_since(connection, project, 0)?;
+    let last_7_days = sum_since(connection, project, last_7_start)?;
+    let last_30_days = sum_since(connection, project, last_30_start)?;
+    let favorite_model = favorite_model(connection, project)?;
+
+    Ok(StatsSummary {
+        all_time,
+        last_7_days,
+        last_30_days,
+        favorite_model,
+    })
+}
+
+fn sum_since(connection: &Connection, project: &str, start_ms: i64) -> AppResult<i64> {
+    connection
+        .query_row(
+            "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+             FROM usage
+             WHERE project_id = ?1
+               AND timestamp_unix_ms >= ?2",
+            params![project, start_ms],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("could not query stats totals: {error}"))
+}
+
+fn favorite_model(connection: &Connection, project: &str) -> AppResult<Option<String>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT model_name
+             FROM usage
+             WHERE project_id = ?1
+             GROUP BY model_name
+             ORDER BY SUM(prompt_tokens + completion_tokens) DESC, model_name
+             LIMIT 1",
+        )
+        .map_err(|error| format!("could not query favorite model: {error}"))?;
+
+    let mut rows = statement
+        .query_map(params![project], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("could not query favorite model: {error}"))?;
+
+    match rows.next() {
+        Some(row) => row
+            .map(Some)
+            .map_err(|error| format!("could not read favorite model: {error}")),
+        None => Ok(None),
+    }
+}
+
+fn print_heatmap(start: NaiveDate, today: NaiveDate, daily: &HashMap<NaiveDate, i64>) {
+    let weeks = ((today - start).num_days() / 7 + 1) as usize;
+    let max = daily.values().copied().max().unwrap_or(0);
+
+    println!("{}", month_header(today).green());
+    for weekday in 0..7 {
+        let label = match weekday {
+            1 => "  Mon ",
+            3 => "  Wed ",
+            5 => "  Fri ",
+            _ => "      ",
+        };
+        print!("{label}");
+        for week in 0..weeks {
+            let day = start + Duration::days((week * 7 + weekday) as i64);
+            if day > today {
+                print!(" ");
+                continue;
+            }
+            print!("{}", heat_cell(*daily.get(&day).unwrap_or(&0), max));
+        }
+        println!();
+    }
+    println!();
+    println!(
+        "      {} {} {} {} {}",
+        "Less".dimmed(),
+        heat_cell(1, 4),
+        heat_cell(2, 4),
+        heat_cell(3, 4),
+        format!("{} More", heat_cell(4, 4)).dimmed()
+    );
+}
+
+fn month_header(today: NaiveDate) -> String {
+    let mut labels = Vec::new();
+    let start = today.month() as i32 - 12;
+    for offset in 0..=12 {
+        let month = (start + offset - 1).rem_euclid(12) + 1;
+        labels.push(month_name(month as u32));
+    }
+    format!("      {}", labels.join(" "))
+}
+
+fn month_name(month: u32) -> &'static str {
+    match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "",
+    }
+}
+
+fn heat_cell(total: i64, max: i64) -> colored::ColoredString {
+    match heat_level(total, max) {
+        0 => "·".green().dimmed(),
+        1 => "░".green(),
+        2 => "▒".bright_green(),
+        3 => "▓".truecolor(80, 200, 120),
+        _ => "█".truecolor(0, 180, 90).bold(),
+    }
+}
+
+fn heat_level(total: i64, max: i64) -> i64 {
+    if total <= 0 || max <= 0 {
+        return 0;
+    }
+    ((total * 4 + max - 1) / max).clamp(1, 4)
+}
+
+fn day_start_ms(day: NaiveDate) -> AppResult<i64> {
+    day.and_hms_opt(0, 0, 0)
+        .map(|value| value.and_utc().timestamp_millis())
+        .ok_or_else(|| format!("could not build start of day for {day}"))
+}
+
 fn history(limit: i64) -> AppResult<()> {
     validate_limit(limit)?;
 
@@ -1253,7 +1488,8 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
                 prompt_tokens INTEGER NOT NULL,
                 completion_tokens INTEGER NOT NULL,
                 duration_ms INTEGER NOT NULL DEFAULT 0,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                timestamp_unix_ms INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_usage_project_model
                 ON usage (project_id, model_name);",
@@ -1285,6 +1521,25 @@ fn create_schema(connection: &Connection) -> AppResult<()> {
             )
             .map_err(|error| format!("could not add duration_ms column: {error}"))?;
     }
+
+    if !usage_has_column(connection, "timestamp_unix_ms")? {
+        connection
+            .execute(
+                "ALTER TABLE usage ADD COLUMN timestamp_unix_ms INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("could not add timestamp_unix_ms column: {error}"))?;
+    }
+
+    connection
+        .execute(
+            "UPDATE usage
+             SET timestamp_unix_ms = CAST(strftime('%s', timestamp) AS INTEGER) * 1000
+             WHERE timestamp_unix_ms = 0
+               AND strftime('%s', timestamp) IS NOT NULL",
+            [],
+        )
+        .map_err(|error| format!("could not backfill timestamp_unix_ms: {error}"))?;
 
     Ok(())
 }
@@ -1863,6 +2118,26 @@ fn format_tokens(value: i64) -> String {
     formatted.chars().rev().collect()
 }
 
+fn format_compact_tokens(value: i64) -> String {
+    if value >= 1_000_000 {
+        return format_compact_decimal(value, 1_000_000, "m");
+    }
+    if value >= 1_000 {
+        return format_compact_decimal(value, 1_000, "k");
+    }
+    value.to_string()
+}
+
+fn format_compact_decimal(value: i64, unit: i64, suffix: &str) -> String {
+    let whole = value / unit;
+    let decimal = (value % unit) * 10 / unit;
+    if decimal == 0 {
+        format!("{whole}{suffix}")
+    } else {
+        format!("{whole}.{decimal}{suffix}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1871,6 +2146,21 @@ mod tests {
     fn formats_tokens_with_commas() {
         assert_eq!(format_tokens(0), "0");
         assert_eq!(format_tokens(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn formats_compact_tokens() {
+        assert_eq!(format_compact_tokens(999), "999");
+        assert_eq!(format_compact_tokens(1_200), "1.2k");
+        assert_eq!(format_compact_tokens(20_100_000), "20.1m");
+    }
+
+    #[test]
+    fn calculates_heat_levels() {
+        assert_eq!(heat_level(0, 100), 0);
+        assert_eq!(heat_level(1, 100), 1);
+        assert_eq!(heat_level(50, 100), 2);
+        assert_eq!(heat_level(100, 100), 4);
     }
 
     #[test]
@@ -1915,5 +2205,6 @@ mod tests {
 
         assert!(usage_has_column(&connection, "provider").expect("inspect schema"));
         assert!(usage_has_column(&connection, "duration_ms").expect("inspect schema"));
+        assert!(usage_has_column(&connection, "timestamp_unix_ms").expect("inspect schema"));
     }
 }

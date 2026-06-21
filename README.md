@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.9.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.10.0-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is a local token ledger for AI agent runs.
 It records provider, model name, prompt tokens, and completion tokens in a
@@ -165,6 +165,7 @@ ntkn
 | `ntkn record --project <PROJ> --provider <TOOL> --model <MODEL> --prompt <NUM> --comp <NUM>` | Append one usage row |
 | `ntkn usage` | Show totals grouped by provider and model |
 | `ntkn status` | Show project setup and hook health |
+| `ntkn stats` | Show a green activity heatmap and usage summary |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
 | `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
 | `ntkn sync-claude` | Pull Claude Code usage from the latest transcript for this project |
@@ -203,6 +204,12 @@ Check setup and hook health:
 
 ```sh
 ntkn status
+```
+
+Show activity stats:
+
+```sh
+ntkn stats
 ```
 
 Show recent rows:
@@ -336,7 +343,8 @@ CREATE TABLE usage (
   model_name TEXT NOT NULL,
   prompt_tokens INTEGER NOT NULL,
   completion_tokens INTEGER NOT NULL,
-  timestamp TEXT NOT NULL
+  timestamp TEXT NOT NULL,
+  timestamp_unix_ms INTEGER NOT NULL DEFAULT 0
 );
 ```
 
