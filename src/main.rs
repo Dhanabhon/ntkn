@@ -92,6 +92,8 @@ enum Command {
     Stats,
     /// Reset usage stats for the current project.
     Reset,
+    /// Reset hook sync state for the current project.
+    Clean,
     /// Pull Claude Code token usage from the latest transcript for this project.
     SyncClaude,
     /// Pull Codex token usage from the latest session JSONL for this project.
@@ -159,6 +161,7 @@ fn run() -> AppResult<()> {
         Some(Command::History { limit }) => history(limit),
         Some(Command::Stats) => stats(),
         Some(Command::Reset) => reset_stats(),
+        Some(Command::Clean) => clean_state(),
         Some(Command::SyncClaude) => sync_claude(),
         Some(Command::SyncCodex) => sync_codex(),
         Some(Command::SyncCursor) => sync_cursor(),
@@ -191,6 +194,7 @@ fn print_splash() {
     println!("  ntkn status");
     println!("  ntkn stats");
     println!("  ntkn reset");
+    println!("  ntkn clean");
     println!("  ntkn sync-claude");
     println!("  ntkn sync-codex");
     println!("  ntkn sync-cursor");
@@ -1586,6 +1590,47 @@ fn reset_stats() -> AppResult<()> {
         .execute("DELETE FROM usage WHERE project_id = ?1", params![project])
         .map_err(|error| format!("could not reset usage stats: {error}"))?;
     println!("{}", format!("reset {deleted} usage rows").green());
+    Ok(())
+}
+
+fn clean_state() -> AppResult<()> {
+    let dir = data_dir()?;
+    let files = [
+        ("codex-state.json", r#"{"sessions":{}}"#),
+        (
+            "cursor-state.json",
+            r#"{"sessions":{},"seen_generations":{}}"#,
+        ),
+        ("agy-state.json", r#"{"sessions":{},"seen_generations":{}}"#),
+        ("opencode-state.json", r#"{"seen":{}}"#),
+    ];
+
+    print!(
+        "{} ",
+        "clean hook sync state? type CLEAN to confirm:".yellow()
+    );
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("could not write confirmation prompt: {error}"))?;
+
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("could not read confirmation: {error}"))?;
+    if answer.trim() != "CLEAN" {
+        println!("{}", "clean cancelled".dimmed());
+        return Ok(());
+    }
+
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    for (name, content) in files {
+        let path = dir.join(name);
+        fs::write(&path, format!("{content}\n"))
+            .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    }
+
+    println!("{}", "cleaned hook sync state".green());
     Ok(())
 }
 

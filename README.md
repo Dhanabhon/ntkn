@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.11.3-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.11.4-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is project-level token accounting for AI
 agent work. It shows how many tokens each project uses, split by provider and
@@ -190,6 +190,7 @@ ntkn
 | `ntkn stats` | Show a green activity heatmap and usage summary |
 | `ntkn history --limit <NUM>` | Show recent rows (default: `10`) |
 | `ntkn reset` | Delete usage rows for the current project (prompts for confirmation) |
+| `ntkn clean` | Reset hook sync state files without deleting usage rows (prompts for confirmation) |
 | `ntkn sync-claude` | Pull Claude Code usage from the latest transcript for this project |
 | `ntkn sync-codex` | Pull Codex usage from the latest session JSONL for this project |
 | `ntkn sync-cursor` | Replay the last captured Cursor stop payload for this project |
@@ -252,6 +253,12 @@ Reset usage stats for the current project:
 
 ```sh
 ntkn reset
+```
+
+Reset hook sync state for the current project:
+
+```sh
+ntkn clean
 ```
 
 Refresh Claude Code totals after a session:
@@ -317,6 +324,21 @@ OpenCode session if `ntkn usage` looks stale.
 `reset` asks for confirmation and deletes only usage rows for the current
 `project_id`. It keeps `.ntkn/rules/ntkn-rules.md`, hook files, and the database
 schema.
+
+`clean` asks for confirmation and rewrites hook sync state files to empty valid
+JSON. It does not delete usage rows. Use it when you want hooks and sync commands
+to forget what they have already seen:
+
+```text
+.ntkn/codex-state.json      -> {"sessions":{}}
+.ntkn/cursor-state.json     -> {"sessions":{},"seen_generations":{}}
+.ntkn/agy-state.json        -> {"sessions":{},"seen_generations":{}}
+.ntkn/opencode-state.json   -> {"seen":{}}
+```
+
+For a clean retest after a hook bug, run `ntkn reset`, then `ntkn clean`, then
+start a fresh AI turn. Running `sync-*` after `clean` can replay older local
+sessions again.
 
 ## Test in another project
 

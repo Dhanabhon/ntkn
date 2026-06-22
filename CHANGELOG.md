@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-06-22
+
+### Added
+
+- `ntkn clean` command to reset hook sync state files without deleting usage rows
+
 ## [0.11.3] - 2026-06-22
 
 ### Fixed
@@ -174,6 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.11.4]: https://github.com/dhanabhon/ntkn/compare/v0.11.3...v0.11.4
 [0.11.3]: https://github.com/dhanabhon/ntkn/compare/v0.11.1...v0.11.3
 [0.11.1]: https://github.com/dhanabhon/ntkn/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dhanabhon/ntkn/compare/v0.10.0...v0.11.0
