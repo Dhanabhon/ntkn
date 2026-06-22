@@ -31,6 +31,15 @@ conversation_id=$(
 generation_id=$(
   jq -r '.generation_id // .generationId // empty' <<<"$input" 2>/dev/null || true
 )
+message_id=$(
+  jq -r '.message_id // .messageId // .event.message_id // .event.messageID // empty' <<<"$input" 2>/dev/null || true
+)
+request_id=$(
+  jq -r '.request_id // .requestId // .event.request_id // .event.requestID // empty' <<<"$input" 2>/dev/null || true
+)
+turn_id=$(
+  jq -r '.turn_id // .turnId // .event.turn_id // .event.turnID // empty' <<<"$input" 2>/dev/null || true
+)
 session_id=$(
   jq -r '.session_id // .sessionId // empty' <<<"$input" 2>/dev/null || true
 )
@@ -127,14 +136,54 @@ extract_usage_object() {
       // "0"
     ) as $prompt
     | (
-      num("output_tokens")
-      // num("outputTokens")
-      // num("completion_tokens")
+      num("completion_tokens")
       // num("completionTokens")
-      // "0"
+      // (
+        (
+          num("output_tokens")
+          // num("outputTokens")
+          // "0"
+          | tonumber
+        ) - (
+          num("reasoning_output_tokens")
+          // num("reasoningOutputTokens")
+          // num("reasoning_tokens")
+          // num("reasoningTokens")
+          // "0"
+          | tonumber
+        )
+        | [., 0] | max | tostring
+      )
     ) as $completion
     | "\($prompt | tonumber)|\($completion | tonumber)"
   ' <<<"$1" 2>/dev/null || echo "0|0"
+}
+
+visible_output_tokens() {
+  local output="$1"
+  local payload="$2"
+  local reasoning
+  reasoning=$(
+    jq -r '
+      .reasoning_output_tokens
+      // .reasoningOutputTokens
+      // .reasoning_tokens
+      // .reasoningTokens
+      // .usage.reasoning_output_tokens
+      // .usage.reasoningOutputTokens
+      // .usage.reasoning_tokens
+      // .usage.reasoningTokens
+      // 0
+    ' <<<"$payload" 2>/dev/null || true
+  )
+  reasoning=${reasoning:-0}
+  if [[ "$reasoning" =~ ^[0-9]+$ ]]; then
+    local visible=$((output - reasoning))
+    if [[ "$visible" -lt 0 ]]; then visible=0; fi
+    printf '%s\n' "$visible"
+  else
+    printf '%s\n' "$output"
+  fi
 }
 
 # Cursor stop payload: input_tokens is already total prompt-side (incl. cache).
@@ -146,7 +195,7 @@ output_tokens=$(
 )
 if [[ "$input_tokens" =~ ^[0-9]+$ && "$output_tokens" =~ ^[0-9]+$ ]]; then
   prompt="$input_tokens"
-  completion="$output_tokens"
+  completion=$(visible_output_tokens "$output_tokens" "$input")
 fi
 
 current_usage=$(
@@ -174,11 +223,23 @@ if ! [[ "$prompt" =~ ^[0-9]+$ && "$completion" =~ ^[0-9]+$ ]]; then
       // .completionTokens
       // .usage.completion_tokens
       // .usage.completionTokens
-      // .usage.output_tokens
-      // .usage.outputTokens
       // empty
     ' <<<"$input" 2>/dev/null || true
   )
+  if ! [[ "$completion" =~ ^[0-9]+$ ]]; then
+    output_tokens=$(
+      jq -r '
+        .output_tokens
+        // .outputTokens
+        // .usage.output_tokens
+        // .usage.outputTokens
+        // empty
+      ' <<<"$input" 2>/dev/null || true
+    )
+    if [[ "$output_tokens" =~ ^[0-9]+$ ]]; then
+      completion=$(visible_output_tokens "$output_tokens" "$input")
+    fi
+  fi
 fi
 
 prompt=${prompt:-${NTKN_PROMPT_TOKENS:-}}
@@ -221,7 +282,8 @@ if [[ "$prompt" == "0" && "$completion" == "0" ]]; then
   finish
 fi
 
-dedupe_key="${generation_id:-${session_id}:${prompt}:${completion}:${model}}"
+stable_key="${generation_id:-${message_id:-${request_id:-${turn_id:-}}}}"
+dedupe_key="${stable_key:-${session_id}:${prompt}:${completion}:${model}}"
 if [[ -z "${NTKN_FORCE_SYNC:-}" && -n "$dedupe_key" ]]; then
   seen=$(
     jq -r --arg key "$dedupe_key" '.seen_generations[$key] // empty' "$state" 2>/dev/null || true

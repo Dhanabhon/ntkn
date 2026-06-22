@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-06-22
+
+### Fixed
+
+- Prevent Codex hook overcounting by recording the final token event per turn
+- Count hook completion as visible output tokens instead of hidden reasoning
+- Improve Cursor, Antigravity, and OpenCode hook dedupe for repeated payloads
+
 ## [0.11.1] - 2026-06-22
 
 ### Changed
@@ -166,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional `--duration` field for per-call timing in milliseconds
 - SQLite schema migration for older databases missing `duration_ms`
 
+[0.11.3]: https://github.com/dhanabhon/ntkn/compare/v0.11.1...v0.11.3
 [0.11.1]: https://github.com/dhanabhon/ntkn/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/dhanabhon/ntkn/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dhanabhon/ntkn/compare/v0.9.0...v0.10.0

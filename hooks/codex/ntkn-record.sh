@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ntkn Codex hook: record token usage after each turn (Stop event).
 #
-# Reads transcript_path from hook JSON on stdin, finds all token_count events
-# newer than the last recorded timestamp, aggregates by model, and calls
-# `ntkn record`.
+# Reads transcript_path from hook JSON on stdin, finds the final token_count
+# event per turn newer than the last recorded timestamp, aggregates by model,
+# and calls `ntkn record`.
 #
 # Requires: ntkn, jq
 # Project setup: run `ntkn init --project <name>` once in the repo root.
@@ -138,21 +138,28 @@ aggregated=$(
     . as $root
     | def model_for($ts):
         ([$root.contexts[] | select(.ts <= $ts)] | last.model) // $default_model;
+    def turn_for($ts):
+        ([$root.contexts[] | select(.ts <= $ts)] | last.ts) // "";
     [$root.events[]
       | . as $event
       | ($event.payload.info.last_token_usage // {}) as $usage
       | {
+          turn: turn_for($event.timestamp),
+          ts: $event.timestamp,
           model: model_for($event.timestamp),
-          prompt: (($usage.input_tokens // 0) + ($usage.cached_input_tokens // 0)),
-          completion: (($usage.output_tokens // 0) + ($usage.reasoning_output_tokens // 0))
+          prompt: ($usage.input_tokens // 0),
+          completion: ([($usage.output_tokens // 0) - ($usage.reasoning_output_tokens // 0), 0] | max)
         }]
+    # ponytail: Codex emits many token_count updates per turn; use request ids if Codex exposes them.
+    | map(select((.prompt // 0) > 0 or (.completion // 0) > 0))
+    | group_by([.turn, .model])
+    | map(max_by(.ts))
     | group_by(.model)
     | map({
         model: .[0].model,
         prompt: (map(.prompt) | add),
         completion: (map(.completion) | add)
       })
-    | map(select((.prompt // 0) > 0 or (.completion // 0) > 0))
   ' <<<"$snapshot"
 )
 

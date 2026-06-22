@@ -84,6 +84,28 @@ message_id=$(
     // empty
   ' <<<"$input" 2>/dev/null || true
 )
+request_id=$(
+  jq -r '
+    .event.properties.requestID
+    // .event.properties.request_id
+    // .event.requestID
+    // .event.request_id
+    // .requestID
+    // .request_id
+    // empty
+  ' <<<"$input" 2>/dev/null || true
+)
+turn_id=$(
+  jq -r '
+    .event.properties.turnID
+    // .event.properties.turn_id
+    // .event.turnID
+    // .event.turn_id
+    // .turnID
+    // .turn_id
+    // empty
+  ' <<<"$input" 2>/dev/null || true
+)
 
 model=$(
   jq -r '
@@ -113,24 +135,43 @@ usage=$(
             // .usage.inputTokens
             // .usage.prompt_tokens
             // .usage.promptTokens
-            // empty
+            // null
           ),
-          completion: (
+          output: (
             .output_tokens
             // .outputTokens
-            // .completion_tokens
-            // .completionTokens
             // .tokens.output
-            // .tokens.completion
             // .usage.output_tokens
             // .usage.outputTokens
+            // null
+          ),
+          completion: (
+            .completion_tokens
+            // .completionTokens
+            // .tokens.completion
             // .usage.completion_tokens
             // .usage.completionTokens
-            // empty
+            // null
+          ),
+          reasoning: (
+            .reasoning_output_tokens
+            // .reasoningOutputTokens
+            // .reasoning_tokens
+            // .reasoningTokens
+            // .usage.reasoning_output_tokens
+            // .usage.reasoningOutputTokens
+            // .usage.reasoning_tokens
+            // .usage.reasoningTokens
+            // 0
           )
         }
+      | .completion = (
+          if (.completion | type) == "number" then .completion
+          elif (.output | type) == "number" then ([.output - (.reasoning // 0), 0] | max)
+          else null end
+        )
       | select((.prompt | type) == "number" and (.completion | type) == "number")
-    ][0] // empty
+    ] | last // empty
   ' <<<"$input" 2>/dev/null || true
 )
 
@@ -158,7 +199,8 @@ if [[ ! -s "$state" ]]; then
   echo '{"seen":{}}' >"$state"
 fi
 
-dedupe_key="${message_id:-${session_id}:${model}:${prompt}:${completion}}"
+stable_key="${message_id:-${request_id:-${turn_id:-}}}"
+dedupe_key="${stable_key:-${session_id}:${model}:${prompt}:${completion}}"
 if [[ -z "${NTKN_FORCE_SYNC:-}" && -n "$dedupe_key" ]]; then
   seen=$(jq -r --arg key "$dedupe_key" '.seen[$key] // empty' "$state" 2>/dev/null || true)
   if [[ "$seen" == "true" ]]; then

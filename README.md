@@ -1,6 +1,6 @@
 # ntkn (นับโทเค็น)
 
-[![version](https://img.shields.io/badge/version-0.11.1-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.11.3-blue)](https://github.com/dhanabhon/ntkn/blob/main/CHANGELOG.md)
 
 `ntkn` (pronounced "nub-token" 🇹🇭) is project-level token accounting for AI
 agent work. It shows how many tokens each project uses, split by provider and
@@ -527,9 +527,10 @@ Layout after init:
 ```
 
 Codex session JSONL files emit `token_count` events with a per-turn
-`last_token_usage` block. The hook records all new events since the last Stop
-and deduplicates by timestamp in `.ntkn/codex-state.json`. Usage is grouped by
-model, so model switches within a session are tracked separately.
+`last_token_usage` block. The hook records the final token event for each new
+turn since the last Stop and deduplicates by timestamp in `.ntkn/codex-state.json`.
+Usage is grouped by model, so model switches within a session are tracked
+separately.
 
 Requirements:
 
@@ -579,8 +580,10 @@ If `~/.codex/hooks.json` already exists, `ntkn init` leaves it unchanged and
 prints a merge note. Copy the Stop block from `hooks/codex/global-hooks.json`
 in this repo.
 
-Prompt-side counts use input plus cached input tokens. Completion counts use
-output plus reasoning tokens from the turn's `last_token_usage`.
+Prompt-side counts use Codex `input_tokens`. Completion counts use Codex
+visible output tokens, calculated as `output_tokens - reasoning_output_tokens`
+when reasoning details are present. Cached input and reasoning details are not
+added again.
 
 ### Cursor
 
@@ -599,8 +602,9 @@ Layout after init:
 
 Cursor project hooks run from the project root. The bundled hook reads per-turn
 `input_tokens` and `output_tokens` from the Cursor stop payload. Transcripts do
-not include usage; the stop hook is the source of truth. Each capture is saved to
-`.ntkn/cursor-last-payload.json` for `ntkn sync-cursor` replay.
+not include usage; the stop hook is the source of truth. If reasoning output is
+reported separately, completion is recorded as visible output only. Each capture
+is saved to `.ntkn/cursor-last-payload.json` for `ntkn sync-cursor` replay.
 
 **Recommended if totals look stale:**
 
@@ -659,8 +663,9 @@ Layout after init:
 ```
 
 The bundled hook reads per-turn `input_tokens` and `output_tokens` from the
-Antigravity stop payload and saves the last capture to
-`.ntkn/agy-last-payload.json`.
+Antigravity stop payload. If reasoning output is reported separately,
+completion is recorded as visible output only. The hook saves the last capture
+to `.ntkn/agy-last-payload.json`.
 
 **Recommended if totals look stale:**
 
@@ -717,7 +722,8 @@ Layout after init:
 OpenCode loads project plugins from `.opencode/plugins/` at startup. The bundled
 plugin listens for `session.idle`, saves the last event to
 `.ntkn/opencode-last-event.json`, and records usage when that event includes
-token metadata.
+token metadata. If reasoning output is reported separately, completion is
+recorded as visible output only.
 
 **Recommended if totals look stale:**
 
