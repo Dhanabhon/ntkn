@@ -167,6 +167,40 @@ cargo build --release
 
 The binary is written to `target/release/ntkn`.
 
+## Quick Start
+
+1. Install the latest local build:
+
+```sh
+cargo install --path . --force
+```
+
+2. Initialize ntkn inside the project you want to track:
+
+```sh
+cd /path/to/your/project
+ntkn init --project my-project
+```
+
+3. Run your AI tool normally. ntkn records usage from supported hooks after each
+AI turn when the tool provides token metadata.
+
+4. Check project usage:
+
+```sh
+ntkn usage
+ntkn history --limit 5
+```
+
+5. For a clean retest after reinstalling or changing hooks:
+
+```sh
+ntkn reset
+ntkn clean
+```
+
+Then start a fresh AI turn and run `ntkn usage` again.
+
 ## Usage
 
 Run `ntkn` without arguments to print the splash screen, current version, usage
